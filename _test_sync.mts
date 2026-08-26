@@ -107,6 +107,50 @@ async function main() {
 		}
 	}
 
+	// ----- 3b. fetchListing: apiKey 含非 Latin-1 字符（•、中文、emoji）→ pre-flight 拦抳。
+	// Bug fix：undici 抛 "Cannot convert argument to a ByteString" 太不友好。这里提前 detect + 给 actionable 错。
+	console.log("\n=== fetchListing: apiKey 非 Latin-1 字符拦截 ===");
+	{
+		let thrown: any = null;
+		// 不能调用真实的 fetch（会拒接非 Latin-1）— 只 catch pre-flight 错误
+		const restore = mockFetch(() => okResp({ data: [] }));
+		try {
+			// 含一个•（U+2022，常见于复制粘贴）
+			await fetchListing({ baseUrl: "http://x/v1", apiKey: "sk-abc•def", apiKind: "openai-compat" });
+		} catch (e) {
+			thrown = e;
+		} finally {
+			restore();
+		}
+		ok("拒绝 fetch 拋错", thrown !== null);
+		ok("错误提及 'apiKey contains non-Latin-1'", thrown instanceof Error && /apiKey contains non-Latin-1/.test(thrown.message));
+		ok("错误提及 U+2022", thrown instanceof Error && /U\+2022/.test(thrown.message));
+	}
+	{
+		let thrown: any = null;
+		const restore = mockFetch(() => okResp({ data: [] }));
+		try {
+			// 中文字符（U+4E2D）
+			await fetchListing({ baseUrl: "http://x/v1", apiKey: "sk-中文-key", apiKind: "openai-compat" });
+		} catch (e) {
+			thrown = e;
+		} finally {
+			restore();
+		}
+		ok("中文 apiKey 也拦截", thrown !== null && /U\+4E2D/.test(thrown.message));
+	}
+	{
+		// 纯 ASCII 合法，不拦截
+		let reached = false;
+		const restore = mockFetch(() => { reached = true; return okResp({ data: [] }); });
+		try {
+			await fetchListing({ baseUrl: "http://x/v1", apiKey: "sk-only-ASCII-123-_", apiKind: "openai-compat" });
+		} finally {
+			restore();
+		}
+		ok("纯 ASCII apiKey 不拦截", reached);
+	}
+
 	// ----- 4. fetchListing: Google -----
 	console.log("\n=== fetchListing: google ===");
 	{

@@ -107,10 +107,11 @@ export async function fetchListing(opts: {
 	baseUrl: string;
 	apiKey?: string;
 	apiKind: ApiKind;
+	proxy?: string;
 	signal?: AbortSignal;
 	timeoutMs?: number;
 }): Promise<FetchResult> {
-	const { baseUrl, apiKey, apiKind, signal, timeoutMs = 10000 } = opts;
+	const { baseUrl, apiKey, apiKind, proxy, signal, timeoutMs = 10000 } = opts;
 	const warnings: string[] = [];
 
 	// 用 AbortController 双重保护：外部 signal + 超时
@@ -119,11 +120,30 @@ export async function fetchListing(opts: {
 	const onAbort = () => ctrl.abort(signal!.reason);
 	if (signal) signal.addEventListener("abort", onAbort);
 
+	// proxy：调 fetch 前设 env，取走后清（Node 18+ 的 undici fetch 读 HTTPS_PROXY/HTTP_PROXY）
+	// 限制：env 是进程全局的，sync 一次只 1 个 fetch，其他并发 fetch 会看到同样 proxy
+	const envPrev = proxy ? { HTTPS_PROXY: process.env.HTTPS_PROXY, HTTP_PROXY: process.env.HTTP_PROXY } : null;
+	if (proxy) {
+		process.env.HTTPS_PROXY = proxy;
+		process.env.HTTP_PROXY = proxy;
+	}
+
 	try {
 		const base = baseUrl.replace(/\/+$/, "");
+		// pre-flight: undici 要求 header value 是 Latin-1（每字符 code < 256）。
+		// apiKey 从复制粘贴过来常含 •、中文、emoji 等，会让 fetch 抛 "Cannot convert argument to a ByteString"。
+		// 这里提前检测并给 actionable 错误。
+		if (apiKey) {
+			for (let i = 0; i < apiKey.length; i++) {
+				if (apiKey.charCodeAt(i) > 255) {
+					const code = apiKey.codePointAt(i) ?? 0;
+					throw new Error(`apiKey contains non-Latin-1 character at position ${i} (U+${code.toString(16).toUpperCase()}). Re-enter the key in the provider form.`);
+				}
+			}
+		}
+
 		let url: string;
 		let headers: Record<string, string> = {};
-		let body: any;
 
 		if (apiKind === "google") {
 			// GET {base}/models?key=$KEY → { models: [{ name, ... }] }
@@ -191,6 +211,11 @@ export async function fetchListing(opts: {
 	} finally {
 		clearTimeout(timer);
 		if (signal) signal.removeEventListener("abort", onAbort);
+		// 还原 env（避免污染后续 fetch）
+		if (envPrev) {
+			process.env.HTTPS_PROXY = envPrev.HTTPS_PROXY;
+			process.env.HTTP_PROXY = envPrev.HTTP_PROXY;
+		}
 	}
 }
 
@@ -199,7 +224,7 @@ export async function fetchListing(opts: {
 // ============================================================================
 
 export async function syncExisting(
-	providers: Record<string, { baseUrl?: string; apiKey?: string; api?: string }>,
+	providers: Record<string, { baseUrl?: string; apiKey?: string; api?: string; proxy?: string }>,
 	signal?: AbortSignal,
 	timeoutMs?: number,
 ): Promise<Array<{ providerId: string; result: FetchResult | { error: string } }>> {
@@ -212,6 +237,7 @@ export async function syncExisting(
 				baseUrl: p.baseUrl,
 				apiKey: p.apiKey,
 				apiKind,
+				proxy: p.proxy,
 				signal,
 				timeoutMs,
 			});

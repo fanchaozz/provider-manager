@@ -71,6 +71,7 @@ export type ProviderConfig = {
   headers?: Record<string, string>;
   compat?: Record<string, unknown>;
   authHeader?: boolean;
+  proxy?: string;
   models?: ModelConfig[];
   modelOverrides?: Record<string, ModelOverrideConfig>;
 };

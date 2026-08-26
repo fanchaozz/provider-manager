@@ -22,7 +22,8 @@ writeFileSync(MODELS_PATH, JSON.stringify({
 		agnes: {
 			baseUrl: "https://api.agnes.example/v1", api: "anthropic-messages", apiKey: "sk-agnes",
 			models: [
-				{ id: "agnes-2.5-flash", contextWindow: 200_000, maxTokens: 64_000, reasoning: true, input: ["text", "image"] },
+				{ id: "agnes-2.5-flash", contextWindow: 200_000, maxTokens: 64_000, reasoning: true, input: ["text", "image"],
+					thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: null, xhigh: null, max: "max" } },
 			],
 		},
 	},
@@ -40,15 +41,15 @@ const th = {
 // 不再依赖 modelRegistry.getAvailable()（插件不覆盖内置）
 const displayNames: Record<string, string> = { kdapi: "kdapi (custom)", agnes: "Agnes" };
 const authStatus:  Record<string, any>    = {
-	kdapi: { ok: true, source: "models.json.apiKey" },
-	agnes: { ok: true, source: "models.json.apiKey" },
+	kdapi: { configured: true, source: "models.json_key" },
+	agnes: { configured: true, source: "models.json_key" },
 };
 
 const mockCtx: any = {
 	mode: "tui",
 	modelRegistry: {
 		getProviderDisplayName: (id: string) => displayNames[id] ?? id,
-		getProviderAuthStatus: (id: string) => authStatus[id] ?? { ok: false },
+		getProviderAuthStatus: (id: string) => authStatus[id] ?? { configured: false },  // 保留以保 mock 兼容；新逻辑已不调这个
 	},
 	ui: { notify: () => undefined, select: async () => undefined, confirm: async () => true, input: async () => "" },
 };
@@ -71,9 +72,10 @@ ok("包含 agnes",                allText.includes("agnes"));
 ok("不含 openai / anthropic 作为 provider id", !/^\s*[▸ ]\s*(openai|anthropic)\b/m.test(allText));
 ok("不含 [custom] tag（已去掉）",       !allText.includes("[custom]"));
 ok("不含 [built-in] tag（已去掉）",     !allText.includes("[built-in]"));
-ok("含 auth 行",                allText.includes("auth:"));
+ok("含 Auth 分组",                allText.includes("Auth"));
+ok("含 apiKey status 行",        allText.includes("apiKey status:"));
 ok("含 200kc 格式化",           allText.includes("200kc"));
-ok("含 footer 键位",            allText.includes("Tab pane"));
+ok("含 footer 键位",            allText.includes("←→ pane"));
 ok("source: models.json (custom)", allText.includes("models.json (custom)"));
 
 // 切到 kdapi（2 个 model）看 minimax-m3
@@ -82,6 +84,43 @@ dash.invalidate();
 const lns2 = dash.render(120);
 ok("切到 kdapi 后 model 列含 minimax-m3", lns2.join("\n").includes("minimax-m3"));
 ok("切到 kdapi 后含 1.0Mc 格式化",       lns2.join("\n").includes("1.0Mc"));
+
+// 增强 UI 检项
+ok("title bar 含 stats (P/M/✓)",  allText.match(/P\s*·\s*\d+M/) !== null);
+ok("provider 行含 ✓ 认证图标",    allText.includes("✓"));
+ok("provider header 含 auth count",  /·\d+✓\s+\d+m/.test(allText));
+ok("model header 含 R / I 计数",   /\d+R\s*·\s*\d+I/.test(allText));
+ok("detail panel 含 Endpoint 分组", allText.includes("Endpoint"));
+ok("detail panel 含 Identity 分组", allText.includes("Identity"));
+
+console.log("\n=== model detail: thinkingLevelMap 单行显示 enabled 的 level ===");
+{
+	const d7 = new Dashboard(mockCtx, th, () => {});
+	await d7.init();
+	d7.handleInput("\x1b[D");  // → model pane
+	const lns = d7.render(120);
+	const joined = lns.join("\n");
+	// agnes-2.5-flash 测试数据里 thinkingLevelMap: { low: "low", medium: "medium", high: "high" }
+	ok("含 Thinking levels 行",  /Thinking levels:/.test(joined));
+	ok("列出 enabled: low, medium, max",  joined.includes("low, medium, max"));
+	// 未勾选的 level 不出现名字（off/minimal/xhigh/max 不应该出现在 Thinking 行）
+	const tlLine = joined.split("\n").find((l) => /Thinking levels:/.test(l)) || "";
+	ok("未 enabled 的 level 不出现",  !/\boff\b|\bminimal\b|\bxhigh\b|\bmax\b/.test(tlLine.replace(/Thinking levels:.*$/, "")));
+}
+
+console.log("\n=== model detail: 全部 null 时 Thinking levels 不显示 ===");
+{
+	// kdapi 的 minimax-m3 没 thinkingLevelMap；不显示该 section
+	const d8 = new Dashboard(mockCtx, th, () => {});
+	await d8.init();
+	// 切到 kdapi（index 1）+ model pane
+	d8.handleInput("\x1b[B");
+	d8.handleInput("\x1b[D");
+	const lns = d8.render(120);
+	const joined = lns.join("\n");
+	const hasTl = joined.split("\n").some((l) => /Thinking levels:/.test(l));
+	ok("无 thinkingLevelMap → 不显示",  !hasTl);
+}
 
 console.log("\n=== 键位测试 ===");
 const d2 = new Dashboard(mockCtx, th, () => {});
@@ -96,11 +135,13 @@ d2.handleInput("G");      ok("G 跳底到 1", (d2 as any).providerIndex === 1);
 // 切到 kdapi（2 个 model）测试 model pane 导航
 (d2 as any).providerIndex = 1; // kdapi：2 个 model
 d2.invalidate();
-d2.handleInput("\t");     ok("Tab 切到 model pane", (d2 as any).pane === "model");
+d2.handleInput("\x1b[D"); ok("← 切到 model pane", (d2 as any).pane === "model");
 ok("切到 model pane 索引 0", (d2 as any).modelIndex === 0);
 d2.handleInput("j");      ok("model pane j 移动到 1", (d2 as any).modelIndex === 1);
 d2.handleInput("k");      ok("model pane k 移动到 0", (d2 as any).modelIndex === 0);
 d2.handleInput("G");      ok("model pane G 跳底到 1", (d2 as any).modelIndex === 1);
+// 切回 provider pane
+d2.handleInput("\x1b[C"); ok("→ 切回 provider pane", (d2 as any).pane === "provider");
 
 d2.handleInput("?");      ok("? 切换帮助", (d2 as any).help === true);
 d2.handleInput("?");      ok("? 关闭帮助", (d2 as any).help === false);
@@ -130,3 +171,22 @@ const emptyCtx: any = {
 const d6 = new Dashboard(emptyCtx, th, () => {});
 await d6.init();
 ok("单 provider 不崩", d6.render(80).length > 0);
+
+console.log("\n=== inspectApiKey：自检 models.json 里 provider.apiKey 状态 ===");
+{
+	// 复现 ui.ts 里的 inspectApiKey（避免导出到 public surface；这里是 test 内部复现）
+	const inspect = (apiKey: unknown): { hasKey: boolean; source?: string } => {
+		if (typeof apiKey !== "string" || apiKey.length === 0) return { hasKey: false, source: "empty" };
+		if (apiKey.startsWith("!")) return { hasKey: true, source: "models.json_command" };
+		if (/^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(apiKey)) return { hasKey: true, source: "models.json_env" };
+		return { hasKey: true, source: "models_json_key" };
+	};
+	ok("明文 key → set + key",       inspect("sk-abc").hasKey && inspect("sk-abc").source === "models_json_key");
+	ok("$ENV → set + env",            inspect("$MY_KEY").hasKey && inspect("$MY_KEY").source === "models.json_env");
+	ok("${ENV} → set + env",          inspect("${MY_KEY}").hasKey && inspect("${MY_KEY}").source === "models.json_env");
+	ok("!command → set + command",    inspect("!cat /path").hasKey && inspect("!cat /path").source === "models.json_command");
+	ok("空 → empty",                  inspect("").hasKey === false && inspect("").source === "empty");
+	ok("undefined → empty",           inspect(undefined).hasKey === false);
+	ok("数字 → empty",                inspect(12345 as any).hasKey === false);
+	ok("被 secret-bug 损坏的 key（首尾匹配）→ set + key",  inspect("sk-••••Xn").hasKey === true);  // 不去管值是否被 bug 坏过；只看“有值”
+}

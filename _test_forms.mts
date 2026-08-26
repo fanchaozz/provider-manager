@@ -68,15 +68,19 @@ async function main() {
 	const initial: any = { providers: { kdapi: { baseUrl: "x", api: "openai-completions", apiKey: "k", models: [{ id: "old-model" }] } } };
 	await writeModelsJson(initial, { backup: false });
 
-	console.log("=== addProviderFlow：成功 ===");
+	// 全新表单模式：addProviderFlow 调 ctx.ui.custom(FormEditor) 一次性采集所有字段（含 id）。无 askInput。
+
+	console.log("=== addProviderFlow：成功（表单模式，id 也走表单）===");
 	{
-		const ctx = makeMockCtx([
-			"newprov",            // id
-			"New Provider",       // name
-			"http://localhost:9000/v1", // baseUrl
-			"",                   // apiKey (留空)
-			"openai-completions", // api
-		]);
+		const ctx = makeMockCtx([], { saved: true, values: {
+			id: "newprov",
+			name: "New Provider",
+			baseUrl: "http://localhost:9000/v1",
+			apiKey: "",
+			api: "openai-completions",
+			authHeader: "no",
+			proxy: "",
+		}});
 		let done = false;
 		await addProviderFlow(ctx, () => { done = true; });
 		const json = await readModelsJson();
@@ -85,23 +89,66 @@ async function main() {
 		ok("newprov.name 正确", json.providers.newprov.name === "New Provider");
 		ok("newprov.baseUrl 正确", json.providers.newprov.baseUrl === "http://localhost:9000/v1");
 		ok("newprov.apiKey 为空", !json.providers.newprov.apiKey);
+		ok("newprov.models=[] ", Array.isArray(json.providers.newprov.models) && json.providers.newprov.models.length === 0);
 		ok("kdapi 还在", !!json.providers.kdapi);
 	}
 
-	console.log("\n=== addProviderFlow：id 非法被拒 ===");
+	console.log("\n=== addProviderFlow：proxy 字段生效 ===");
 	{
-		const ctx = makeMockCtx(["bad id!@#", "good-id"]);
+		const ctx = makeMockCtx([], { saved: true, values: {
+			id: "proxied",
+			name: "Proxied",
+			baseUrl: "http://api.example.com/v1",
+			apiKey: "k",
+			api: "openai-completions",
+			authHeader: "no",
+			proxy: "http://127.0.0.1:7890",
+		}});
 		await addProviderFlow(ctx, () => undefined);
 		const json = await readModelsJson();
-		ok("bad id 没写盘", !json.providers["bad id!@#"]);
+		ok("proxied.proxy 写盘", json.providers.proxied?.proxy === "http://127.0.0.1:7890");
 	}
 
-	console.log("\n=== addProviderFlow：id 重复被拒 ===");
+	console.log("\n=== addProviderFlow：表单 Esc 取消 ===");
 	{
-		const ctx = makeMockCtx(["kdapi"]);
+		const ctx = makeMockCtx([], undefined);  // FormEditor 返回 undefined = 取消
+		await addProviderFlow(ctx, () => undefined);
+		const json = await readModelsJson();
+		ok("cancelp 没写盘", !json.providers.cancelp);
+	}
+
+	console.log("\n=== addProviderFlow：id 重复（表单 validate 拦截）===");
+	{
+		// 表单里 validate 发现了，提交时 ok=false，弹错（但 mock 不走 validate，提交后服务端再查）
+		const ctx = makeMockCtx([], { saved: true, values: {
+			id: "kdapi",   // 重复
+			name: "Dup",
+			baseUrl: "x",
+			apiKey: "",
+			api: "openai-completions",
+			authHeader: "no",
+			proxy: "",
+		}});
 		await addProviderFlow(ctx, () => undefined);
 		const json = await readModelsJson();
 		ok("kdapi 没被覆盖（models 仍为 1 个）", json.providers.kdapi.models.length === 1);
+	}
+
+	console.log("\n=== addProviderFlow：与 editProviderFlow 结构同形（id 在表单里）===");
+	{
+		const ctx = makeMockCtx([], { saved: true, values: {
+			id: "str-equal",
+			name: "",
+			baseUrl: "",
+			apiKey: "",
+			api: "",
+			authHeader: "no",
+			proxy: "",
+		}});
+		await addProviderFlow(ctx, () => undefined);
+		const json = await readModelsJson();
+		ok("str-equal 写盘", !!json.providers["str-equal"]);
+		ok("str-equal.name 为空（未设）", !json.providers["str-equal"].name);
 	}
 
 	console.log("\n=== addProviderFlow：用户中途取消 ===");
@@ -148,54 +195,38 @@ async function main() {
 		ok("providers 未变", Object.keys(after).length === Object.keys(before).length);
 	}
 
-	console.log("\n=== addModelFlow：成功 ===");
+	console.log("\n=== addModelFlow：已是 stub，通知 sync ===");
 	{
 		const target = Object.keys((await readModelsJson()).providers)[0]!;
-		const ctx = makeMockCtx([
-			"gpt-test",          // id
-			"GPT Test",          // name
-			false,               // useDefaults=no (fall through)
-			true,                // reasoning
-			"text",              // input
-			"100000",            // ctxWindow
-			"8192",              // maxTokens
-			false,               // configure thinking level map? (no)
-		]);
+		const ctx = makeMockCtx([]);
 		await addModelFlow(ctx, target, () => undefined);
-		const json = await readModelsJson();
-		const models = json.providers[target].models;
-		ok("gpt-test 已添加", models.some((m: any) => m.id === "gpt-test"));
-		ok("gpt-test.reasoning", models.find((m: any) => m.id === "gpt-test").reasoning === true);
-		ok("gpt-test.contextWindow", models.find((m: any) => m.id === "gpt-test").contextWindow === 100000);
-		ok("gpt-test.maxTokens", models.find((m: any) => m.id === "gpt-test").maxTokens === 8192);
-	}
-
-	console.log("\n=== addModelFlow：id 重复被拒 ===");
-	{
-		const target = Object.keys((await readModelsJson()).providers)[0]!;
-		const existingId = (await readModelsJson()).providers[target].models[0].id;
-		const ctx = makeMockCtx([existingId]);
-		await addModelFlow(ctx, target, () => undefined);
-		const json = await readModelsJson();
-		const models = json.providers[target].models;
-		ok("重复 id 没新增", models.filter((m: any) => m.id === existingId).length === 1);
+		ok("notify 提及 sync", ctx.__notifyLog.some((m: string) => m.toLowerCase().includes("sync")));
+		ok("未在 disk 新增 model", !((await readModelsJson()).providers[target].models ?? []).some((m: any) => m.id === "gpt-test"));
 	}
 
 	console.log("\n=== editModelFlow：局部更新 ===");
 	{
 		const target = Object.keys((await readModelsJson()).providers)[0]!;
 		const json = await readModelsJson();
-		const oldModel = json.providers[target].models[0];
-		const ctx = makeMockCtx([
-			"",                  // name 留空
-			true,                // reasoning → true
-			"",                  // ctxWindow 留空保留
-			"",                  // maxTokens 留空保留
-		]);
+		// 补一个 model 以供 editModelFlow 测试
+		if (!json.providers[target].models || json.providers[target].models.length === 0) {
+			await writeModelsJson({ ...json, providers: { ...json.providers, [target]: { ...json.providers[target], models: [{ id: "edit-target", input: ["text"], contextWindow: 8000, maxTokens: 4000 }] } } });
+		}
+		const json2 = await readModelsJson();
+		const oldModel = json2.providers[target].models[0];
+		// FormEditor 一次性返回所有字段
+		const ctx = makeMockCtx([], { saved: true, values: {
+			name: "",
+			reasoning: "yes",
+			input: oldModel.input ?? ["text"],
+			contextWindow: oldModel.contextWindow ?? 0,
+			maxTokens: oldModel.maxTokens ?? 0,
+			thinkingLevelMap: null,
+		}});
 		await editModelFlow(ctx, target, oldModel.id, () => undefined);
 		const updated = (await readModelsJson()).providers[target].models.find((m: any) => m.id === oldModel.id);
-		ok("model id 未变", updated.id === oldModel.id);
-		ok("model.reasoning 改了", updated.reasoning === true);
+		ok("model id 未变", updated?.id === oldModel.id);
+		ok("model.reasoning 改了", updated?.reasoning === true);
 	}
 
 	console.log("\n=== deleteModelFlow：confirm=true ===");

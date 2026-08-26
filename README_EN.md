@@ -20,6 +20,10 @@ After install, `~/.pi/agent/provider-manager.json` is auto-created on first load
 
 ---
 
+## Recent changes
+
+Version history in [CHANGELOG.md](./CHANGELOG.md).
+
 ## Quick start
 
 | Want to… | Do this |
@@ -70,14 +74,22 @@ When the provider list is empty, pressing `n` on the Models pane switches to the
 
 ## Sync flow
 
-`sync` is the fastest way to add a batch of models. It fetches the remote model list for the selected provider and shows a checklist.
+`sync` is the **only** way to add a batch of models. It fetches the remote model list for the selected provider and shows a checklist.
 
 The checklist **shows every model for that provider — both existing and remote new**:
 
 - Existing models are labelled `<id>  (existing)`, default checked. Uncheck to delete.
 - Remote new models are labelled `<id>` only, default unchecked. Check to add.
 
-Press `Enter` to write the result, `Esc` to cancel. On save, the final `models.json` is the union of (checked existing) + (checked new); remote new is preferred over local if both are checked (so you pick up the fresh `reasoning` / `input` / `ctx` / `maxTokens` / `thinkingLevelMap` from the default model config).
+Press `Enter` to write the result, `Esc` to cancel. On save, the final `models.json` is the union of (checked existing) + (checked new); remote new is preferred over local (so you pick up the fresh `reasoning` / `input` / `ctx` / `maxTokens` / `thinkingLevelMap`).
+
+**Newly added models' fields come from `~/.pi/agent/provider-manager.json`'s `defaultModel` block** (not the code default) — this is the `loadDefaultModelConfig()` behavior. Edit that file before sync to customise the model template.
+
+**proxy field**: a provider's edit form accepts a `proxy` URL (e.g. `http://127.0.0.1:7890`). On sync it's set as `HTTPS_PROXY` / `HTTP_PROXY` env vars and restored after the request. Other concurrent fetches in the same process will see the same proxy while it is set (env is process-global; sync runs at most one fetch at a time).
+
+**apiKey character constraint**: sync rejects apiKeys with any character whose code > 255 (`•`, CJK, emoji, etc., typical from copy-paste). The error is actionable: `apiKey contains non-Latin-1 character at position 7 (U+2022). Re-enter the key in the provider form.`
+
+**Noise filter**: embedding / tts / image-gen models are filtered by default (`embed*`, `tts`, `whisper`, `dall-e`, `clip`, `moderation`, `image-*`).
 
 ---
 

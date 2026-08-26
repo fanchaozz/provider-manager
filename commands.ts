@@ -11,7 +11,6 @@ import { openDashboard } from "./ui.ts";
 import {
 	addProviderFlow,
 	deleteProviderFlow,
-	addModelFlow,
 	restoreFromBackupFlow,
 	syncFlow,
 } from "./forms.ts";
@@ -56,17 +55,6 @@ export function registerCommands(pi: ExtensionAPI): void {
 					const id = rest.trim();
 					if (!id) { ctx.ui.notify("用法: /providers remove <id>", "warning"); return; }
 					await deleteProviderFlow(ctx, id, () => undefined);
-					return;
-				}
-				case "model": {
-					const tokens = rest.split(/\s+/);
-					const pid = tokens[0];
-					if (tokens[1] === "add") {
-						if (!pid) { ctx.ui.notify("用法: /providers model <pid> add", "warning"); return; }
-						await addModelFlow(ctx, pid, () => undefined);
-					} else {
-						ctx.ui.notify("用法: /providers model <pid> add", "warning");
-					}
 					return;
 				}
 				case "reset": {
@@ -219,13 +207,13 @@ function cmdHelp(ctx: ExtensionCommandContext): void {
 		"  /providers ls [filter]      List providers and their models",
 		"  /providers add <id>         Add a new provider (TUI: open dashboard, press n)",
 		"  /providers remove <id>      Remove a provider (with confirm)",
-		"  /providers model <pid> add  Add a model to a provider (TUI form)",
 		"  /providers sync [provider-id]  Pick a provider (or pass id), fetch remote models, multi-select, write back. TUI: y on selected provider.",
 		"  /providers test <provider>/<model>  Test model (auth + reachable + 1-shot generation). TUI: t on selected model.",
 		"  /providers test-all [provider]      Batch test all models of a provider (concurrency 3). TUI: T on selected provider.",
 		"  /providers reset            Restore models.json.bak (with confirm)",
 		"  /providers help             This help",
 		"",
+		"Models can only be added/removed via sync (y on a provider).",
 		"Switching models is NOT done by this extension — use Ctrl+L or /model.",
 	];
 	const out = lines.join("\n");

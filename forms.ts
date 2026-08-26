@@ -15,7 +15,7 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { readModelsJson, writeModelsJson, backupExists, restoreBackup, type ModelsJson, type ProviderConfig, type ModelConfig, ALLOWED_APIS } from "./store.ts";
-import { fetchListing, inferModel, isNoise, diffModels, type FetchedModel } from "./sync.ts";
+import { fetchListing, inferModel, diffModels } from "./sync.ts";
 import { ModelChecklist, FormEditor, type FormField } from "./components.ts";
 
 // ============================================================================
@@ -26,17 +26,6 @@ import { ModelChecklist, FormEditor, type FormField } from "./components.ts";
 const API_OPTIONS: string[] = [
     ...ALLOWED_APIS,
     "(none / 由 model 字段指定)",
-];
-const INPUT_OPTIONS: string[] = ["text", "image (supports image)"];
-
-/** thinking level 预设（避免用户手输 JSON）。
- *  null = 禁用该 level，string = 映射到 provider 那个字符串值。 */
-const THINKING_PRESETS: { label: string; map: ModelConfig["thinkingLevelMap"] }[] = [
-    { label: "（不设 / 用 provider 默认）", map: {} },
-    { label: "Anthropic 风格 (low/medium/high/max → 同名 + off=null, minimal=null)", map: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: null, max: "max" } },
-    { label: "OpenAI o1 风格 (low/medium/high → 同名 + off=null, minimal=null)", map: { off: null, minimal: null, low: "low", medium: "medium", high: "high" } },
-    { label: "只暴露 high+max (其他全 null)", map: { off: null, minimal: null, low: null, medium: null, high: "high", xhigh: null, max: "max" } },
-    { label: "Custom (Enter 自填 JSON)", map: { __custom: true } as any },
 ];
 
 /** 新 model 的默认配置。调 /providers model <pid> add 或 dashboard n 走 addModelFlow 时
@@ -161,9 +150,8 @@ async function askSelect(
     return result;
 }
 
-async function askConfirm(ctx: ExtensionCommandContext, title: string, message: string, defaultValue = true): Promise<boolean | undefined> {
+async function askConfirm(ctx: ExtensionCommandContext, title: string, message: string): Promise<boolean | undefined> {
     return ctx.ui.confirm(title, message);
-    // 注：confirm 不支持 defaultValue，UI 自带 yes/no
 }
 
 /** 包 FormEditor 进 ctx.ui.custom dialog。返回 { saved, values } 或 { saved: false, values: initial }。 */
@@ -196,164 +184,74 @@ async function runFormEditor<T extends Record<string, unknown>>(
 // ============================================================================
 
 export async function addProviderFlow(ctx: ExtensionCommandContext, onDone: () => void): Promise<void> {
-    const id = await askInput(ctx, {
-        message: "Provider id (lowercase / digits / _ / -; e.g. my-provider):",
-        placeholder: "my-provider",
-        validate: (s) => {
-            if (!/^[a-z0-9_-]+$/i.test(s)) return "id must match [a-z0-9_-]+";
-            return null;
-        },
-    });
-    if (!id) return;
-
-    const json = await readModelsJson();
-    if (json.providers[id]) {
-        ctx.ui.notify(`Provider "${id}" already exists. Use /providers remove ${id} first.`, "error");
+    if (ctx.mode !== "tui") {
+        ctx.ui.notify("add provider 需要 TUI 模式。打开 /providers 后按 n", "warning");
+        onDone?.();
         return;
     }
 
-    const name = await askInput(ctx, { message: `Display name (optional):`, placeholder: id });
-    if (name === undefined) return;
-
-    const baseUrl = await askInput(ctx, { message: "baseUrl (e.g. http://localhost:11434/v1):", placeholder: "https://api.example.com/v1" });
-    if (baseUrl === undefined) return;
-
-    const apiKey = await askInput(ctx, { message: "apiKey (empty = no key):", secret: true });
-    if (apiKey === undefined) return;
-
-    const apiChoice = await askSelect(ctx, { message: "API type:", options: API_OPTIONS });
-    if (apiChoice === undefined) return;
-
+    // 与 editProviderFlow 同形：一次性表单采集所有字段（含 id）
+    // 错误（id 重复 / id 非法）不走 notify 弹窗 — 留在表单里提示，点 s 后再调
+    const json = await readModelsJson();
+    const fields: FormField[] = [
+        { key: "id", label: "id", type: "text", hint: "[a-z0-9_-]+", validate: (s) => {
+            if (!s) return "id required";
+            if (!/^[a-z0-9_-]+$/i.test(s as string)) return "id must match [a-z0-9_-]+";
+            if (json.providers[s as string]) return `provider "${s}" already exists`;
+            return null;
+        } },
+        { key: "name", label: "Display name", type: "text", hint: "(empty = unset)" },
+        { key: "baseUrl", label: "baseUrl", type: "text" },
+        { key: "apiKey", label: "apiKey", type: "secret" },
+        { key: "api", label: "api", type: "select", options: API_OPTIONS, hint: "(empty = unset)" },
+        { key: "authHeader", label: "authHeader", type: "select", options: ["no", "yes"] },
+        { key: "proxy", label: "proxy", type: "text", hint: "(empty = unset; http://host:port)" },
+    ];
+    const initial: Record<string, unknown> = {
+        id: "",
+        name: "",
+        baseUrl: "",
+        apiKey: "",
+        api: "",
+        authHeader: "no",
+        proxy: "",
+    };
+    const result = await runFormEditor(ctx, `Add provider`, fields, initial);
+    if (!result.saved) { onDone?.(); return; }
+    const v = result.values;
+    const id = (v.id as string).trim();
+    // 二次校验：表单后还会再查一次（同进程可能别的并发写）
+    if (json.providers[id]) {
+        ctx.ui.notify(`Provider "${id}" already exists. Use /providers remove ${id} first.`, "error");
+        onDone?.();
+        return;
+    }
     const newProv: ProviderConfig = {
-        ...(name ? { name } : {}),
-        baseUrl,
-        apiKey: apiKey || undefined,
-        api: apiChoice,
+        ...((v.name as string) ? { name: v.name as string } : {}),
+        baseUrl: ((v.baseUrl as string) || "") || undefined,
+        apiKey: ((v.apiKey as string) || "") || undefined,
+        api: ((v.api as string) || "") || undefined,
+        authHeader: v.authHeader === "yes",
+        proxy: ((v.proxy as string) || "") || undefined,
         models: [],
     };
     try {
-        await writeModelsJson({ ...json, providers: { ...json.providers, [id]: newProv } });
-        ctx.ui.notify(`✓ Provider "${id}" added. Open /providers to add models.`, "success");
+        const fresh = await readModelsJson();
+        await writeModelsJson({ ...fresh, providers: { ...fresh.providers, [id]: newProv } });
+        ctx.ui.notify(`✓ Provider "${id}" added. Use 'y' to sync models.`, "success");
     } catch (err) {
         ctx.ui.notify(`Write failed: ${err instanceof Error ? err.message : err}`, "error");
     }
     onDone?.();
 }
 
+/** @deprecated Models are only added/removed via sync. Kept as a stub so old imports do not crash; logs a notice. */
 export async function addModelFlow(
     ctx: ExtensionCommandContext,
-    providerId: string,
+    _providerId: string,
     onDone?: () => void,
 ): Promise<void> {
-    const json = await readModelsJson();
-    const prov = json.providers[providerId];
-    if (!prov) {
-        ctx.ui.notify(`Provider "${providerId}" does not exist.`, "error");
-        onDone?.();
-        return;
-    }
-
-    const id = await askInput(ctx, { message: "Model id (e.g. gpt-5 / claude-opus-4-7):", validate: (s) => s ? null : "id required" });
-    if (!id) return;
-
-    if ((prov.models ?? []).some((m) => m.id === id)) {
-        ctx.ui.notify(`Model "${id}" already exists in "${providerId}".`, "error");
-        onDone?.();
-        return;
-    }
-
-    const name = await askInput(ctx, { message: `Display name (optional):`, placeholder: id });
-    if (name === undefined) return;
-
-    // 用默认配置？reasoning/input/ctx/max/thinkingLevelMap 都用 DEFAULT_MODEL_CONFIG＋可被 ~/.pi/agent/provider-manager.json#defaultModel 覆盖
-    const DEFAULT_CFG = loadDefaultModelConfig();
-    const useDefaults = await askConfirm(
-        ctx,
-        "Use default config?",
-        `reasoning=${DEFAULT_CFG.reasoning ? "yes" : "no"} · input=${DEFAULT_CFG.input.join("+")} · ctx=${DEFAULT_CFG.contextWindow} · max=${DEFAULT_CFG.maxTokens} · thinkingLevelMap: medium=medium, others=null. (After creation, use 'e' to customize.)`,
-    );
-    if (useDefaults === undefined) return;
-
-    let reasoning: boolean;
-    let input: ("text" | "image")[];
-    let ctxWindow: number;
-    let maxTokens: number;
-    let thinkingLevelMap: ModelConfig["thinkingLevelMap"] | undefined;
-
-    if (useDefaults) {
-        reasoning = DEFAULT_CFG.reasoning;
-        input = [...DEFAULT_CFG.input];
-        ctxWindow = DEFAULT_CFG.contextWindow;
-        maxTokens = DEFAULT_CFG.maxTokens;
-        thinkingLevelMap = { ...DEFAULT_CFG.thinkingLevelMap };
-    } else {
-        reasoning = await askConfirm(ctx, "Supports extended thinking?", "Yes for o1/o3/reasoning models, No otherwise.");
-        if (reasoning === undefined) return;
-
-        const inputType = await askSelect(ctx, { message: "Input type:", options: INPUT_OPTIONS });
-        if (inputType === undefined) return;
-        input = inputType === "text" ? ["text"] : ["text", "image"];
-
-        const ctxWindowStr = await askInput(ctx, { message: "context window tokens (empty = 128000):", placeholder: "128000", validate: (s) => !s || /^\d+$/.test(s) ? null : "must be a number" });
-        if (ctxWindowStr === undefined) return;
-        ctxWindow = ctxWindowStr ? parseInt(ctxWindowStr, 10) : 128000;
-
-        const maxTokensStr = await askInput(ctx, { message: "max output tokens (empty = 16384):", placeholder: "16384", validate: (s) => !s || /^\d+$/.test(s) ? null : "must be a number" });
-        if (maxTokensStr === undefined) return;
-        maxTokens = maxTokensStr ? parseInt(maxTokensStr, 10) : 16384;
-
-        if (reasoning) {
-            const presetLabels = THINKING_PRESETS.map((p) => p.label);
-            const pick = await askSelect(ctx, {
-                message: "Thinking level map (provider-dependent):",
-                options: presetLabels,
-                defaultValue: presetLabels[0],
-            });
-            if (pick === undefined) return;
-            const preset = THINKING_PRESETS.find((p) => p.label === pick);
-            if (preset && Object.keys(preset.map).length > 0) {
-                if ((preset.map as any).__custom) {
-                    const mapStr = await askInput(ctx, {
-                        message: 'thinking level map (JSON, e.g. {"low":"low","medium":"medium"}):',
-                        placeholder: '{"off":null,"low":"low"}',
-                    });
-                    if (mapStr === undefined) return;
-                    if (mapStr.trim()) {
-                        try {
-                            const parsed = JSON.parse(mapStr);
-                            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-                                thinkingLevelMap = parsed as ModelConfig["thinkingLevelMap"];
-                            } else {
-                                ctx.ui.notify("thinking level map must be a JSON object; skipping", "warning");
-                            }
-                        } catch (err) {
-                            ctx.ui.notify(`thinking level map JSON invalid: ${err instanceof Error ? err.message : err}; skipping`, "warning");
-                        }
-                    }
-                } else {
-                    thinkingLevelMap = preset.map;
-                }
-            }
-        }
-    }
-
-    const model: ModelConfig = {
-        id,
-        name: name || undefined,
-        reasoning,
-        input,
-        contextWindow: ctxWindow,
-        maxTokens,
-        ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
-    };
-
-    const newProv: ProviderConfig = { ...prov, models: [...(prov.models ?? []), model] };
-    try {
-        await writeModelsJson({ ...json, providers: { ...json.providers, [providerId]: newProv } });
-        ctx.ui.notify(`✓ Model "${id}" added to "${providerId}".`, "success");
-    } catch (err) {
-        ctx.ui.notify(`Write failed: ${err instanceof Error ? err.message : err}`, "error");
-    }
+    ctx.ui.notify("新增 model 请用 sync（按 y）。该入口已停用。", "warning");
     onDone?.();
 }
 
@@ -381,6 +279,7 @@ export async function editProviderFlow(
         { key: "apiKey", label: "apiKey", type: "secret" },
         { key: "api", label: "api", type: "select", options: API_OPTIONS, hint: "1-N 选" },
         { key: "authHeader", label: "authHeader", type: "select", options: ["no", "yes"] },
+        { key: "proxy", label: "proxy", type: "text", hint: "(empty = unset; http://host:port)" },
     ];
     const initial: Record<string, unknown> = {
         name: cur.name ?? "",
@@ -388,6 +287,7 @@ export async function editProviderFlow(
         apiKey: cur.apiKey ?? "",
         api: cur.api ?? "",
         authHeader: cur.authHeader ? "yes" : "no",
+        proxy: cur.proxy ?? "",
     };
     const result = await runFormEditor(ctx, `Edit provider "${providerId}"`, fields, initial);
     if (!result.saved) { onDone?.(); return; }
@@ -399,6 +299,7 @@ export async function editProviderFlow(
         apiKey: ((v.apiKey as string) || "") || undefined,
         api: ((v.api as string) || "") || undefined,
         authHeader: v.authHeader === "yes",
+        proxy: ((v.proxy as string) || "") || undefined,
     };
     try {
         await writeModelsJson({ ...json, providers: { ...json.providers, [providerId]: next } });
@@ -557,7 +458,7 @@ export async function syncFlow(ctx: ExtensionCommandContext, opts: SyncOpts = {}
     ctx.ui.notify(`Fetching models from ${prov.baseUrl}...`, "info");
     let result;
     try {
-        result = await fetchListing({ baseUrl: prov.baseUrl, apiKey, apiKind, signal: ctx.signal, timeoutMs: 10000 });
+        result = await fetchListing({ baseUrl: prov.baseUrl, apiKey, apiKind, proxy: prov.proxy, signal: ctx.signal, timeoutMs: 10000 });
     } catch (err) {
         ctx.ui.notify(`Fetch failed: ${err instanceof Error ? err.message : err}`, "error");
         opts.onDone?.();
@@ -566,7 +467,9 @@ export async function syncFlow(ctx: ExtensionCommandContext, opts: SyncOpts = {}
     if (result.warnings.length) ctx.ui.notify(result.warnings.join("; "), "warning");
     if (result.models.length === 0 && (prov.models ?? []).length === 0) { ctx.ui.notify("No models found. Check baseUrl / api key.", "warning"); opts.onDone?.(); return; }
     const existing = (prov.models ?? []).map((m) => ({ id: m.id }));
-    const { toAdd } = diffModels(result.models, existing);
+    // 关键修复：传 loadDefaultModelConfig() 作 defaults，使 toAdd 使用用户级 default（不是代码内置默认）
+    const userDefaults = loadDefaultModelConfig();
+    const { toAdd } = diffModels(result.models, existing, { defaults: userDefaults });
     // wire pi done directly to checklist onConfirm/onCancel (otherwise dialog never closes)
     // checklist shows ALL models in this provider:
     //   - existing: label " (existing)", default checked (uncheck = remove)

@@ -317,7 +317,13 @@ export class FormEditor<T extends Record<string, unknown>> {
 			if (f.validate) { const err = f.validate(raw); if (err) { this.error = `${f.label}: ${err}`; return { ok: false }; } }
 		} else {  // text, secret
 			if (f.validate) { const err = f.validate(raw); if (err) { this.error = `${f.label}: ${err}`; return { ok: false }; } }
-			(this.values as any)[f.key] = raw;
+			// secret: 避免覆写原值。draft 是 masked display ("••••Xn")，如果用户没改（draftIsOriginal=true），
+			// 切 field / Enter 退出 edit 都会调 commitDraft，不跳这会写回 masked 字符串覆盖真 key。
+			if (f.type === "secret" && this.draftIsOriginal) {
+				// no-op，保持 values[f.key] 原值
+			} else {
+				(this.values as any)[f.key] = raw;
+			}
 		}
 		this.error = null;
 		return { ok: true };
@@ -364,11 +370,14 @@ export class FormEditor<T extends Record<string, unknown>> {
 		const f0 = this.fields[this.cursor];
 		const isNonInput = f0?.type === "select" || f0?.type === "levelmap" || f0?.type === "multiselect";
 		const isTypeable = f0 && (f0.type === "text" || f0.type === "secret" || f0.type === "number" || f0.type === "json");
+		const isReadonly = f0?.type === "readonly";
 
-		// Esc / q → 取消整个 form（仅当不在 typeable 字段里输入字母 q/q）
-		// 在 text/secret/number/json 字段里输入 q 应该被当作字符（apiKey 含 q 不会被取消）
-		if (matchesKey(data, "escape") || (data === "q" && !isTypeable)) {
-			// edit 模式下 Esc = 退出 edit 模式（commit 当前值）
+		// 统一模型：所有字段都遵 view / edit 两态。
+		//   view（editing=false，默认）：只响应 Enter（进 edit）、↑↓/j/k（切字段）、s（保存）、Esc/q（取消）
+		//   edit（editing=true）：可修改（typeable 输字符 / non-typeable 按 Space/↑↓）、Enter（提交+退出）、Esc（退出）、↑↓（提交+切字段）
+
+		// 1. Esc / q → edit 中退出（commit）；view 模式取消整个 form
+		if (matchesKey(data, "escape") || data === "q") {
 			if (this.editing) {
 				this.commitDraft();
 				this.editing = false;
@@ -379,45 +388,66 @@ export class FormEditor<T extends Record<string, unknown>> {
 			return;
 		}
 
-		// s → 保存整个 form（仅当不在 typeable 字段里输入字母 s）
-		// 在 text/secret/number/json 字段里输入 s 应该被当作字符（apiKey 含 s 不会被保存）
-		if (data === "s" && !isTypeable) {
+		// 2. s → 保存整个 form（仅在 view 模式；edit 模式下 s 是字符 / no-op）
+		if (data === "s" && !this.editing) {
 			const result = this.commitDraft();
 			if (!result.ok) { this.invalidate(); return; }
 			this.onSave(this.values);
 			return;
 		}
 
-		// e → 非输入字段进入 edit 模式（保持整体风格一致：单键操作）
-		if ((data === "e" || data === "E") && isNonInput && !this.editing) {
-			this.editing = true;
-			this.invalidate();
-			return;
-		}
-		// Enter 行为
-		//   edit 模式下 → 退出 edit 模式（commit 当前值）
-		//   输入字段 → 提交 + 移动到下一字段
-		//   其他（readonly）→ 提交整个 form 并保存
+		// 3. Enter → toggle edit（readonly 不响应）
+		//   view: 进 edit（所有 typeable / non-typeable）
+		//   edit: commit + 退出 edit（不走下一字段，留在原字段；用户用 ↑↓ 切）
 		if (matchesKey(data, "enter") || data === "\r" || data === "\n") {
-			if (this.editing && isNonInput) {
+			if (isReadonly) return;
+			if (this.editing) {
 				this.commitDraft();
 				this.editing = false;
 				this.invalidate();
 				return;
 			}
-			if (isTypeable) {
-				// 输入字段：commit draft + 移动到下一字段
-				const result = this.commitDraft();
-				if (!result.ok) { this.invalidate(); return; }
-				this.move(1);
-				this.editing = false;
-				return;
+			// 进 edit。secret field：draft = 原值（不是 masked 显示），用户可看/可改真 key；
+			// commitDraft 会配合 draftIsOriginal 避免覆写未改的原值。
+			if (f0?.type === "secret") {
+				const orig = (this.values as any)[f0.key];
+				this.draft = (orig === undefined || orig === null) ? "" : String(orig);
+				this.draftIsOriginal = true;
 			}
-			// readonly 字段：Enter 什么都不做（用 s 保存）
+			this.editing = true;
+			this.invalidate();
 			return;
 		}
 
-		// edit 模式下：↑↓/j/k 在 options 内移动，Space pick
+		// 4. ↑↓：
+		//   view / edit + typeable：切字段（edit 模式下 commit + 退 edit）
+		//   edit + non-typeable：在 step 7 处理（options 内 nav）
+		if (matchesKey(data, "down") || matchesKey(data, "up")) {
+			if (!(this.editing && isNonInput)) {
+				this.commitDraft();
+				this.move(matchesKey(data, "up") ? -1 : 1);
+				this.editing = false;
+				return;
+			}
+		}
+
+		// 5. j/k：
+		//   view：切字段
+		//   edit + typeable：字符（下面 printable 处理）
+		//   edit + non-typeable：options 内 nav（在 step 7 处理）
+		if ((data === "j" || data === "k") && !this.editing) {
+			this.move(data === "j" ? 1 : -1);
+			return;
+		}
+
+		// 6. Space：view + non-typeable 快捷进 edit（与 Enter 等价）
+		if (data === " " && isNonInput && !this.editing) {
+			this.editing = true;
+			this.invalidate();
+			return;
+		}
+
+		// 7. edit + non-typeable：↑↓/j/k 在 options 内移动，Space pick
 		if (this.editing && isNonInput) {
 			if (f0!.type === "levelmap") {
 				if (matchesKey(data, "down") || data === "j") {
@@ -454,7 +484,7 @@ export class FormEditor<T extends Record<string, unknown>> {
 				}
 				return;  // edit 模式下其他键不响应
 			}
-			// multiselect 字段：↑↓ 选 option，Space toggle（在值里加/去）
+			// multiselect 字段：↑↓/j/k 选 option，Space toggle（在值里加/去）
 			if (f0!.type === "multiselect" && f0!.options) {
 				const opts = f0!.options;
 				if (matchesKey(data, "down") || data === "j") {
@@ -481,38 +511,24 @@ export class FormEditor<T extends Record<string, unknown>> {
 			}
 		}
 
-		// nav 模式下：↑↓ 切字段（所有字段），j/k 切字段（仅 non-input；text 字段 j/k 是普通字符）
-		if (matchesKey(data, "down") || (isNonInput && data === "j")) {
-			this.commitDraft();
-			this.move(1);
-			this.editing = false;  // 切到新字段退出 edit
-			return;
-		}
-		if (matchesKey(data, "up") || (isNonInput && data === "k")) {
-			this.commitDraft();
-			this.move(-1);
-			this.editing = false;
-			return;
-		}
+		// 8. readonly：后续输入不响应
+		if (isReadonly) return;
 
-		// readonly 字段：忽略
-		if (f0?.type === "readonly") return;
+		// 9. view 模式：不接受任何字符输入（需先 Enter 进 edit）
+		if (!this.editing) return;
 
-		// nav 模式下 Space 在非输入字段：进入 edit 模式（不动值）
-		if (data === " " && isNonInput && !this.editing) {
-			this.editing = true;
-			this.invalidate();
-			return;
-		}
-
-		// 文本类输入处理
+		// 10. Backspace：仅在 edit + typeable 删除 draft
 		if (matchesKey(data, "backspace")) {
+			if (!isTypeable) return;
 			if (this.draft.length > 0) this.draft = this.draft.slice(0, -1);
 			this.draftIsOriginal = false;
 			this.invalidate();
 			return;
 		}
+
+		// 11. 可打印字符：仅在 edit + typeable 追加 draft
 		if (data.length === 1 && data.charCodeAt(0) >= 32 && data.charCodeAt(0) < 127) {
+			if (!isTypeable) return;
 			// number 字段：第一个数字替换（避免 100 + "2" = 1002），后续 append
 			if (f0?.type === "number" && /^\d$/.test(data) && this.draftIsOriginal) {
 				this.draft = data;
@@ -671,8 +687,9 @@ export class FormEditor<T extends Record<string, unknown>> {
 				valueStr = isActive ? raw : th.fg("text", raw);
 			}
 			const prefix = isActive ? th.fg("accent", "▸ ") : "  ";
+			const editMarker = isActive && this.editing ? th.fg("accent", " [● edit]") : "";
 			const hint = f.hint ? "  " + th.fg("muted", f.hint) : "";
-			const line = prefix + labelStr + valueStr + hint;
+			const line = prefix + labelStr + valueStr + editMarker + hint;
 			lines.push(truncateForRender(line, width));
 		}
 
@@ -680,12 +697,13 @@ export class FormEditor<T extends Record<string, unknown>> {
 		lines.push(th.fg("borderMuted", "─".repeat(width)));
 		const f = this.fields[this.cursor];
 		const hints: string[] = ["↑↓ field"];
-		if (f?.type === "multiselect") hints.push(this.editing ? "↑↓ option · Space toggle · Enter commit" : "e edit · Space toggle");
-		else if (f?.type === "select") hints.push(this.editing ? "↑↓ option · Space pick · Enter commit" : "e edit · Space pick");
-		else if (f?.type === "levelmap") hints.push(this.editing ? "↑↓ level · Space toggle · Enter commit" : "e edit · Space toggle");
-		else hints.push("type to edit");
-		hints.push("Backspace del");
-		hints.push("s save");
+		if (f?.type === "multiselect") hints.push(this.editing ? "↑↓ option · Space toggle · Enter commit" : "Enter edit · Space toggle");
+		else if (f?.type === "select") hints.push(this.editing ? "↑↓ option · Space pick · Enter commit" : "Enter edit · Space pick");
+		else if (f?.type === "levelmap") hints.push(this.editing ? "↑↓ level · Space toggle · Enter commit" : "Enter edit · Space toggle");
+		else if (f?.type === "readonly") hints.push("readonly");
+		else hints.push(this.editing ? "type to edit" : "Enter edit · type");
+		hints.push(this.editing && f && (f.type === "text" || f.type === "secret" || f.type === "number" || f.type === "json") ? "Backspace del" : "Backspace");
+		hints.push(this.editing ? "Enter commit" : "s save");
 		hints.push("Esc cancel");
 		lines.push(th.fg("dim", " " + hints.join(" · ")));
 

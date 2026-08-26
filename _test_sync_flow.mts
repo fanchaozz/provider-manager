@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 const TMP_DIR = mkdtempSync(join(tmpdir(), "pi-pm-sync-flow-"));
 (globalThis as any)[Symbol.for("pi-provider-manager:models-path-override")] = join(TMP_DIR, "models.json");
 (globalThis as any)[Symbol.for("pi-provider-manager:backup-path-override")] = join(TMP_DIR, "models.json.bak");
+// 隔离 user-level provider-manager.json。不存在 → 走代码 DEFAULT_MODEL_CONFIG
+(globalThis as any)[Symbol.for("pi-provider-manager:default-model-path-override")] = join(TMP_DIR, "pm.json");
 
 import { writeModelsJson, readModelsJson } from "./store.ts";
 import { syncFlow } from "./forms.ts";

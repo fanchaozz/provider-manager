@@ -14,7 +14,6 @@ import {
 	addProviderFlow,
 	editProviderFlow,
 	deleteProviderFlow,
-	addModelFlow,
 	editModelFlow,
 	deleteModelFlow,
 	syncFlow,
@@ -33,6 +32,9 @@ type ModelRow = {
 	reasoning: boolean;
 	input: string[];
 	hasApiKey: boolean;
+	// 详情面板需要从 raw ModelConfig 透传
+	thinkingLevelMap?: Partial<Record<"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max", string | null>>;
+	cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 };
 
 type ProviderRow = {
@@ -182,17 +184,13 @@ function buildProviders(ctx: ExtensionCommandContext, json: ModelsJson): { provi
 	// 只看 models.json 里的自定义 provider；内置 provider 走 pi 的 /model，不在插件覆盖范围
 	const customIds = Object.keys(json.providers).sort();
 
+	// 本插件只管理 models.json 里的 url+apiKey 自定义 provider（无 OAuth）。
+	// 直接从 json.providers[pid].apiKey 自检，避开 pi runtime 的多路径判断。
+	// source 标识 key 来源：models.json_key（明文）、models.json_env（$ENV）、models.json_command（!cmd）、empty（未设）。
 	const auth = new Map<string, { hasKey: boolean; source?: string }>();
-	const authStatus = (ctx.modelRegistry as any).getProviderAuthStatus;
-	if (typeof authStatus === "function") {
-		for (const pid of customIds) {
-			try {
-				const s = authStatus(pid);
-				auth.set(pid, { hasKey: !!s?.ok, source: s?.source });
-			} catch {
-				auth.set(pid, { hasKey: false });
-			}
-		}
+	for (const pid of customIds) {
+		const apiKey = json.providers[pid]?.apiKey;
+		auth.set(pid, inspectApiKey(apiKey));
 	}
 
 	const providers: ProviderRow[] = customIds.map((pid) => {
@@ -208,6 +206,9 @@ function buildProviders(ctx: ExtensionCommandContext, json: ModelsJson): { provi
 				reasoning: !!m.reasoning,
 				input: m.input ?? ["text"],
 				hasApiKey: auth.get(pid)?.hasKey ?? false,
+				// 详情面板需要这些字段
+				thinkingLevelMap: m.thinkingLevelMap,
+				cost: m.cost,
 			})),
 		};
 	});
@@ -278,7 +279,7 @@ class Dashboard {
 			this.onClose();
 			return;
 		}
-		if (matchesKey(data, "tab")) {
+		if (matchesKey(data, "left") || matchesKey(data, "right")) {
 			this.pane = this.pane === "provider" ? "model" : "provider";
 			this.invalidate();
 			return;
@@ -300,22 +301,8 @@ class Dashboard {
 			this.setIndex(0);
 		} else if (data === "G") {
 			this.setIndex(items.length - 1);
-		} else if (data === "n") {
-			// n: 新增。若没 provider 则强制切到 provider pane 走 addProviderFlow。
-			if (this.pane === "provider") {
-				void this.runForm(addProviderFlow);
-			} else {
-				const cur = this.providers[this.providerIndex];
-				if (cur) {
-					void this.runForm(addModelFlow, cur.id);
-				} else {
-					// 无 provider：切到 provider pane 再走 add
-					this.pane = "provider";
-					this.invalidate();
-					this.ctx.ui.notify("先新建 provider：按 n 添加", "info");
-				}
-			}
-		} else if (data === "e") {
+		} else if (matchesKey(data, "enter") || data === "\r" || data === "\n") {
+			// Enter → 选中项的编辑（与原 'e' 行为一致）。model 仅允许 edit，不允许 new。
 			if (this.pane === "provider" && this.providers[this.providerIndex]) {
 				const id = this.providers[this.providerIndex].id;
 				void this.runForm(editProviderFlow, id);
@@ -323,6 +310,13 @@ class Dashboard {
 				const prov = this.providers[this.providerIndex];
 				const m = prov?.models[this.modelIndex];
 				if (prov && m) void this.runForm(editModelFlow, prov.id, m.id);
+			}
+		} else if (data === "n") {
+			// n: 新增 provider。仅 provider 面板支持；model 面板的 n 跳到 sync 提示。
+			if (this.pane === "provider") {
+				void this.runForm(addProviderFlow);
+			} else {
+				this.ctx.ui.notify("model 不能直接新增，请用 sync（按 y）", "info");
 			}
 		} else if (data === "d") {
 			const prov = this.providers[this.providerIndex];
@@ -357,16 +351,8 @@ class Dashboard {
 		const json = await readModelsJson();
 		this.json = json;
 		this.auth = new Map();
-		const authStatus = this.ctx.modelRegistry.getProviderAuthStatus;
-		if (typeof authStatus === "function") {
-			for (const pid of Object.keys(json.providers)) {
-				try {
-					const s = (authStatus as any)(pid);
-					this.auth.set(pid, { hasKey: !!s?.ok, source: s?.source });
-				} catch {
-					this.auth.set(pid, { hasKey: false });
-				}
-			}
+		for (const pid of Object.keys(json.providers)) {
+			this.auth.set(pid, inspectApiKey(json.providers[pid]?.apiKey));
 		}
 		this.invalidate();
 	}
@@ -457,19 +443,18 @@ class Dashboard {
 		const th = this.theme;
 		const lines: string[] = [];
 
-		// 1. Header
-		lines.push(th.fg("accent", th.bold(" provider-manager ")) + th.fg("borderMuted", "─".repeat(Math.max(0, width - 20))));
-		lines.push("");
+		// 1. Header (title + stats)
+		lines.push(this.renderTitleBar(width, th));
 
 		if (this.initError) {
 			lines.push(th.fg("error", `  ⚠ ${this.initError}`));
 			lines.push(th.fg("dim", "  按 q 退出，修复 models.json 后 /providers 重开"));
 		} else if (this.providers.length === 0) {
-			lines.push(th.fg("dim", "  (no providers found)"));
-			lines.push(th.fg("dim", "  按 n 新建 provider，或检查 ~/.pi/agent/models.json"));
+			lines.push(...this.renderEmptyState(th));
 		} else {
 			// 2. Body: 两栏
-			const colWidth = Math.max(20, Math.floor((width - 3) / 2));
+			lines.push("");
+			const colWidth = Math.max(24, Math.floor((width - 3) / 2));
 			const leftLines = this.renderProviderColumn(colWidth, th);
 			const rightLines = this.renderModelColumn(colWidth, th);
 			const rows = Math.max(leftLines.length, rightLines.length);
@@ -477,13 +462,11 @@ class Dashboard {
 			for (let r = 0; r < rows; r++) {
 				const l = leftLines[r] ?? "";
 				const rr = rightLines[r] ?? "";
-				// 关键：visiblePad 只看可见宽度（剥掉 [tag]...[/tag]），不再被主题标签吃掉 padding
 				lines.push(visiblePad(l, colWidth) + sep + rr);
 			}
-			lines.push("");
 
 			// 3. Detail
-			lines.push(th.fg("borderMuted", "─".repeat(width)));
+			lines.push("");
 			lines.push(...this.renderDetail(width, th));
 		}
 
@@ -492,24 +475,76 @@ class Dashboard {
 		if (this.help) {
 			lines.push(...this.renderHelp(width, th));
 		} else {
-			lines.push(th.fg("dim", " ↑↓/jk nav · Tab pane · n new · e edit · d del · y sync · t test · T test-all · ? help · q close"));
+			const parts = ["↑↓/jk nav", "←→ pane"];
+			if (this.pane === "provider") parts.push("n new", "Enter edit", "y sync");
+			else parts.push("Enter edit", "y sync", "t test", "T test-all");
+			parts.push("d del", "? help", "q close");
+			lines.push(th.fg("dim", " " + parts.join(" · ")));
 		}
 		this.cachedWidth = width;
 		this.cachedLines = lines;
 		return lines;
 	}
 
+	/** title bar：左侧包名+粗体，右侧 stats（providers/models/authed） */
+	private renderTitleBar(width: number, th: any): string {
+		const totalModels = this.providers.reduce((s, p) => s + p.models.length, 0);
+		const authed = Array.from(this.auth.values()).filter(a => a?.hasKey).length;
+		const stats = this.providers.length === 0
+			? "no providers"
+			: `${this.providers.length}P · ${totalModels}M${authed > 0 ? ` · ${authed}✓` : ""}`;
+		const title = th.fg("accent", th.bold(" provider-manager "));
+		const right = th.fg("dim", " " + stats + " ");
+		const titleW = 18;  //  " provider-manager " visible length
+		const rightW = visibleWidthStrippingTheme(right);
+		const fill = Math.max(2, width - titleW - rightW);
+		return title + th.fg("borderMuted", "─".repeat(fill)) + right;
+	}
+
+	/** 无 provider 时的空态提示 */
+	private renderEmptyState(th: any): string[] {
+		const out: string[] = [];
+		out.push("");
+		out.push(th.fg("dim", "  ┌──────────────────────────────────────────────────┐"));
+		out.push(th.fg("dim", "  │  (no providers found)                            │"));
+		out.push(th.fg("dim", "  │                                                  │"));
+		out.push(th.fg("dim", "  │  Press ") + th.fg("accent", "n") + th.fg("dim", " to add the first provider.            │"));
+		out.push(th.fg("dim", "  │  Or check ~/.pi/agent/models.json.               │"));
+		out.push(th.fg("dim", "  └──────────────────────────────────────────────────┘"));
+		return out;
+	}
+
 	private renderProviderColumn(width: number, th: any): string[] {
 		const lines: string[] = [];
-		const headerTag = this.pane === "provider" ? th.fg("accent", th.bold("▸ Providers")) : th.fg("muted", "  Providers");
-		lines.push(truncateToWidth(headerTag, width));
-		lines.push("");
+		const totalModels = this.providers.reduce((s, p) => s + p.models.length, 0);
+		const authed = Array.from(this.auth.values()).filter(a => a?.hasKey).length;
+		const stats = ` ${this.providers.length}·${authed}✓ ${totalModels}m `;
+		// ▸ 之前硬编码在 headText 里，inactive 时 trimStart() 不能去掉它（不是空白），导致头部 2 空格+▸ 与下面
+		// 非 cursor 行的 2 空格+内容 错 1 个字符。现在按 pane 动态生成。
+		const headActive = this.pane === "provider";
+		const headPrefix = headActive ? "▸ " : "  ";
+		const headBase = "Providers";
+		// 先按 plain 文本 truncate，再 th.fg 整行包色（同 model 列）
+		const headPlain = truncateToWidth(headPrefix + headBase + stats, width);
+		const head = (headActive ? th.fg("accent", th.bold(headPlain)) : th.fg("muted", th.bold(headPlain)));
+		lines.push(head);
+		// 下划线长度 = head 实际可见宽度
+		lines.push(th.fg("borderMuted", "─".repeat(Math.min(width, headPrefix.length + headBase.length + stats.length))));
 		this.providers.forEach((p, i) => {
 			const sel = i === this.providerIndex;
-			const arrow = sel && this.pane === "provider" ? th.fg("accent", "▸ ") : "  ";
+			const isActivePane = sel && this.pane === "provider";
+			const arrow = isActivePane ? th.fg("accent", "▸ ") : "  ";
 			const nameTh = sel ? th.bold(p.id) : p.id;
-			const cntThemed = th.fg("dim", ` (${p.models.length})`);
-			lines.push(visiblePad(arrow + nameTh + cntThemed, width));
+			// 认证状态图标：✓ (有 key) / ✗ (无 key) / 空格 (无 status)
+			const auth = this.auth.get(p.id);
+			let authIcon = "  ";
+			if (auth) authIcon = auth.hasKey ? th.fg("success", "✓ ") : th.fg("error", "✗ ");
+			// model 数量
+			const cnt = th.fg("dim", ` ${p.models.length}m`);
+			// 0 model 提示
+			const warn = p.models.length === 0 ? th.fg("warning", " ⚠") : "";
+			const line = arrow + nameTh + authIcon + cnt + warn;
+			lines.push(visiblePad(line, width));
 		});
 		return lines;
 	}
@@ -518,19 +553,35 @@ class Dashboard {
 		const lines: string[] = [];
 		const provider = this.providers[this.providerIndex];
 		const models = provider?.models ?? [];
-		const headerTag = this.pane === "model" ? th.fg("accent", th.bold(`▸ Models (${provider?.id ?? "?"})`)) : th.fg("muted", `  Models (${provider?.id ?? "?"})`);
-		lines.push(truncateToWidth(headerTag, width));
-		lines.push("");
+		const rCount = models.filter(m => m.reasoning).length;
+		const iCount = models.filter(m => m.input.includes("image")).length;
+		const stats = models.length > 0 ? ` ${models.length}m · ${rCount}R · ${iCount}I ` : " 0m ";
+		// ▸ 由 pane 决定，不在 headPlain 里。同 provider 列。
+		const isHeadActive = this.pane === "model" && !!provider;
+		const headPrefix = isHeadActive ? "▸ " : "  ";
+		const headBase = provider ? `Models (${provider.id})` : "Models";
+		// 先按 plain 文本 truncate（避免 ANSI 字符撑爆宽度），最后整行包色
+		const headPlain = truncateToWidth(headPrefix + headBase + stats, width);
+		const headColored = isHeadActive ? th.fg("accent", th.bold(headPlain)) : th.fg("muted", th.bold(headPlain));
+		lines.push(headColored);
+		// 下划线长度 = head 可见宽度
+		lines.push(th.fg("borderMuted", "─".repeat(Math.min(width, headPrefix.length + headBase.length + stats.length))));
+
 		if (models.length === 0) {
 			lines.push(th.fg("dim", "  (no models)"));
+			lines.push(th.fg("dim", "  Press ") + th.fg("accent", "y") + th.fg("dim", " to sync from remote"));
+			return lines;
 		}
 		models.forEach((m, i) => {
 			const sel = i === this.modelIndex;
-			const arrow = sel ? (this.pane === "model" ? "▸ " : "  ") : "  ";
-			const flags = [m.reasoning && "R", m.input.includes("image") && "I"].filter(Boolean).join("");
+			const isActivePane = sel && this.pane === "model";
+			// 全 plain text，末尾才 th.fg 整行包色（避免 ANSI 被 truncateToWidth 计入宽度）
+			const arrow = isActivePane ? "▸ " : "  ";
+			const rFlag = m.reasoning ? "R" : "-";
+			const iFlag = m.input.includes("image") ? "I" : "-";
+			const flagStr = ` [${rFlag}${iFlag}]`;
 			const ctx2 = m.contextWindow ? ` ${formatNum(m.contextWindow)}c` : "";
 			const max2 = m.maxTokens ? ` ${formatNum(m.maxTokens)}m` : "";
-			const flagStr = flags ? ` [${flags}]` : "";
 			const raw = arrow + m.id + flagStr + ctx2 + max2;
 			const line = truncateToWidth(raw, width);
 			lines.push(sel ? th.fg("accent", line) : line);
@@ -543,53 +594,96 @@ class Dashboard {
 		if (this.pane === "provider") {
 			const p = this.providers[this.providerIndex];
 			if (!p) return [th.fg("dim", " (no provider selected)")];
-			lines.push(th.fg("accent", th.bold("Provider: ")) + p.id);
-			lines.push(`  displayName: ${p.displayName}`);
-			lines.push(`  source:      models.json (custom)`);
-			lines.push(`  models:      ${p.models.length}`);
 			const auth = this.auth.get(p.id);
-			if (auth) lines.push(`  auth:        ${auth.hasKey ? th.fg("success", "✓ ") + (auth.source ?? "ok") : th.fg("error", "✗ no key")}`);
-			// 原始 json（来自 models.json 的话）
-			const raw = this.json?.providers?.[p.id];
+			const authIcon = auth
+				? (auth.hasKey ? th.fg("success", "✓ ") : th.fg("error", "✗ "))
+				: th.fg("dim", "  ");
+			// 大标题
+			lines.push(th.fg("accent", th.bold(`  ${authIcon} Provider: `)) + th.bold(p.id));
+			lines.push("");
+			// Identity
+			lines.push(th.fg("muted", "  Identity"));
+			lines.push(`    displayName:   ${p.displayName || th.fg("dim", "(unset)")}`);
+			lines.push(`    source:        models.json (custom)`);
+			lines.push(`    models:        ${p.models.length}`);
+			// raw config
+			const raw = this.json?.providers?.[p.id] as any;
 			if (raw) {
-				lines.push(th.fg("muted", "  raw (from models.json):"));
-				const summary = summarizeProviderRaw(raw);
-				lines.push(...summary.map((l) => th.fg("dim", "    " + l)));
+				lines.push("");
+				lines.push(th.fg("muted", "  Endpoint"));
+				lines.push(`    baseUrl:       ${raw.baseUrl || th.fg("dim", "(unset)")}`);
+				lines.push(`    api:           ${raw.api || th.fg("dim", "(unset)")}`);
+				if (raw.proxy) lines.push(`    proxy:         ${raw.proxy}`);
+				lines.push("");
+				lines.push(th.fg("muted", "  Auth"));
+				lines.push(`    apiKey:        ${maskApiKey(raw.apiKey)}`);
+				lines.push(`    authHeader:    ${raw.authHeader ? "yes" : "no"}`);
+				if (auth) {
+					// 自检：仅描述 models.json 里 apiKey 字段状态（不是 pi 的认证是否有效；那是 t/T 测的）
+					const statusText = auth.hasKey ? "set" : "empty";
+					const statusColor = auth.hasKey ? th.fg("success", "✓ set") : th.fg("warning", "✗ empty");
+					lines.push(`    apiKey status: ${statusColor}${auth.source && auth.source !== "empty" ? th.fg("dim", " (" + auth.source + ")") : ""}`);
+				}
 			}
 		} else {
 			const p = this.providers[this.providerIndex];
 			const m = p?.models[this.modelIndex];
 			if (!m) return [th.fg("dim", " (no model selected)")];
-			lines.push(th.fg("accent", th.bold("Model: ")) + `${p.id} / ${m.id}`);
-			lines.push(`  reasoning:    ${m.reasoning ? "yes" : "no"}`);
-			lines.push(`  input:        ${m.input.join(", ") || "(none)"}`);
-			lines.push(`  context:      ${m.contextWindow?.toLocaleString() ?? "?"}`);
-			lines.push(`  max output:   ${m.maxTokens?.toLocaleString() ?? "?"}`);
-			// raw
-			const rawModel = this.json?.providers?.[p.id]?.models?.find((mm: any) => mm.id === m.id);
-			if (rawModel) {
-				lines.push(th.fg("muted", "  raw (from models.json):"));
-				lines.push(...summarizeModelRaw(rawModel).map((l) => th.fg("dim", "    " + l)));
+			lines.push(th.fg("accent", th.bold(`  Model: `)) + `${p.id} / ${m.id}`);
+			lines.push("");
+			lines.push(th.fg("muted", "  Capabilities"));
+			lines.push(`    reasoning:     ${m.reasoning ? th.fg("accent", "yes") : th.fg("dim", "no")}`);
+			lines.push(`    input:         ${m.input.join(", ") || th.fg("dim", "(none)")}`);
+			lines.push("");
+			lines.push(th.fg("muted", "  Limits"));
+			lines.push(`    context:       ${m.contextWindow?.toLocaleString() ?? th.fg("dim", "?")}`);
+			lines.push(`    max output:    ${m.maxTokens?.toLocaleString() ?? th.fg("dim", "?")}`);
+			// thinking level map：单行显示 enabled 的 level 名字（`low, medium, max`）。无任何 enabled 时跳过
+			// 详情面板真值来自 m.thinkingLevelMap（buildProviders 已从 ModelConfig 透传）
+			const tlm = m.thinkingLevelMap;
+			if (tlm && typeof tlm === "object") {
+				const enabled = (Object.entries(tlm) as [string, string | null][])
+					.filter(([, v]) => v !== null && v !== undefined)
+					.map(([k]) => k);
+				if (enabled.length) {
+					lines.push("");
+					lines.push(`  Thinking levels:  ${th.fg("text", enabled.join(", "))}`);
+				}
+			}
+			// cost
+			const cost = m.cost;
+			if (cost) {
+				lines.push("");
+				lines.push(th.fg("muted", "  Cost"));
+				lines.push(`    input:        $${cost.input}/M`);
+				lines.push(`    output:       $${cost.output}/M`);
+				if (cost.cacheRead) lines.push(`    cache read:   $${cost.cacheRead}/M`);
+				if (cost.cacheWrite) lines.push(`    cache write:  $${cost.cacheWrite}/M`);
 			}
 		}
 		return lines.map((l) => truncateToWidth(l, width));
 	}
 
 	private renderHelp(width: number, th: any): string[] {
-		return [
+		const lines: string[] = [
 			th.fg("accent", "Key bindings"),
 			"  ↑/↓ or j/k    navigate in current pane",
 			"  g / G          jump to top / bottom",
-			"  Tab            switch between Providers and Models pane",
-			"  n              new provider (or model on model pane)",
-			"  e              edit selected provider / model",
+			"  ← / →          switch between Providers and Models pane",
+			"  Enter          edit selected provider / model",
 			"  d              delete (with confirm)",
 			"  y              sync — fetch remote models for selected provider",
 			"  ?              toggle this help",
 			"  q / Esc        close dashboard",
-			"",
-			th.fg("dim", " y sync · t test current model · T test all in provider"),
-		].map((l) => truncateToWidth(l, width));
+		];
+		// 按面板增补特有项
+		if (this.pane === "provider") {
+			lines.splice(5, 0, "  n              new provider (models are added via sync)");
+		} else {
+			lines.splice(5, 0, "  t / T          test current model / test all in provider");
+		}
+		lines.push("", th.fg("dim", " y sync"));
+		return lines.map((l) => truncateToWidth(l, width));
 	}
 }
 
@@ -599,27 +693,27 @@ function formatNum(n: number): string {
 	return String(n);
 }
 
-function summarizeProviderRaw(raw: any): string[] {
-	const lines: string[] = [];
-	if (raw.baseUrl) lines.push(`baseUrl: ${raw.baseUrl}`);
-	if (raw.api) lines.push(`api: ${raw.api}`);
-	if (raw.apiKey) lines.push(`apiKey: ${maskApiKey(raw.apiKey)}`);
-	if (raw.authHeader) lines.push(`authHeader: ${raw.authHeader}`);
-	if (raw.headers && Object.keys(raw.headers).length) lines.push(`headers: ${Object.keys(raw.headers).length} entries`);
-	return lines;
-}
-
-function summarizeModelRaw(raw: any): string[] {
-	const lines: string[] = [];
-	if (raw.name) lines.push(`name: ${raw.name}`);
-	if (raw.baseUrl) lines.push(`baseUrl: ${raw.baseUrl}`);
-	if (raw.api) lines.push(`api: ${raw.api}`);
-	if (raw.cost) lines.push(`cost: in ${raw.cost.input} / out ${raw.cost.output}`);
-	if (raw.thinkingLevelMap) {
-		const keys = Object.keys(raw.thinkingLevelMap);
-		lines.push(`thinkingLevelMap: ${keys.length} levels`);
+/**
+ * 检查 models.json 里 provider.apiKey 的状态。
+ * 返回 { hasKey, source }：source 标识 key 的来源类型。
+ *   - "models_json_key"   明文 API key
+ *   - "models_json_env"    $ENV_VAR 或 ${ENV_VAR} 插值
+ *   - "models.json_command" !shell-command 动态取 key
+ *   - "empty"             未设
+ */
+function inspectApiKey(apiKey: unknown): { hasKey: boolean; source?: string } {
+	if (typeof apiKey !== "string" || apiKey.length === 0) {
+		return { hasKey: false, source: "empty" };
 	}
-	return lines;
+	// !command 动态取 key
+	if (apiKey.startsWith("!")) {
+		return { hasKey: true, source: "models.json_command" };
+	}
+	// $ENV 或 ${ENV}
+	if (/^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(apiKey)) {
+		return { hasKey: true, source: "models.json_env" };
+	}
+	return { hasKey: true, source: "models_json_key" };
 }
 
 // ============================================================================

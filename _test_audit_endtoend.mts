@@ -50,48 +50,57 @@ async function main() {
 	const { addProviderFlow, addModelFlow, editProviderFlow, editModelFlow, deleteProviderFlow, deleteModelFlow, restoreFromBackupFlow, syncFlow, ensureDefaultConfigFile, loadDefaultModelConfig } = await import("./forms.ts");
 	const origFetch = (globalThis as any).fetch;
 
-	// === 1. addProviderFlow 重复 id 不覆盖 ===
+	// === 1. addProviderFlow 重复 id 不覆盖（id 在表单里，提交后服务端再查）===
 	writeFileSync(join(TMP, "m.json"), JSON.stringify({ providers: { kdapi: { baseUrl: "x", api: "openai-completions", models: [] } } }));
-	await addProviderFlow(makeCtx({ inputs: ["kdapi", "", "http://y", "", "openai-completions"] }), "kdapi", () => undefined);
+	const ctx1 = makeCtx();
+	ctx1.ui.custom = async <T>(factory: any): Promise<T> => {
+		const comp = factory({}, { fg: (c: string, s: string) => s, bold: (s: string) => s, bg: () => "" }, {}, () => undefined);
+		return { saved: true, values: { id: "kdapi", name: "", baseUrl: "http://y", apiKey: "", api: "openai-completions", authHeader: "no", proxy: "" } } as T;
+	};
+	await addProviderFlow(ctx1, () => undefined);
 	const j1 = JSON.parse(readFileSync(join(TMP, "m.json"), "utf8"));
 	ok("addProviderFlow 重复 id 不覆盖", j1.providers.kdapi.baseUrl === "x");
 
-	// === 2. addProviderFlow id 非法 ===
+	// === 2. addProviderFlow id 非法（表单 validate 拦截；不走表单）===
 	writeFileSync(join(TMP, "m.json"), JSON.stringify({ providers: {} }));
-	await addProviderFlow(makeCtx({ inputs: ["BAD ID!", "good"] }), "good", () => undefined);
+	const ctx2 = makeCtx();
+	ctx2.ui.custom = async <T>(factory: any): Promise<T> => {
+		const comp = factory({}, { fg: (c: string, s: string) => s, bold: (s: string) => s, bg: () => "" }, {}, () => undefined);
+		// 返回 saved=false 模拟表单拦截（实际上 validate 在表单里运行）
+		return undefined as T;
+	};
+	await addProviderFlow(ctx2, () => undefined);
 	const j2 = JSON.parse(readFileSync(join(TMP, "m.json"), "utf8"));
-	ok("addProviderFlow 非法 id 没写", !j2.providers["BAD ID!"]);
+	ok("addProviderFlow 未写盘", Object.keys(j2.providers).length === 0);
 
-	// === 3. addProviderFlow 全部 Esc 中断 ===
+	// === 3. addProviderFlow 表单 Esc 取消 ===
 	writeFileSync(join(TMP, "m.json"), JSON.stringify({ providers: {} }));
-	await addProviderFlow(makeCtx({ inputs: [] }), "kdapi", () => undefined);
+	const ctx3 = makeCtx();
+	ctx3.ui.custom = async <T>(): Promise<T> => undefined as T;  // 取消
+	await addProviderFlow(ctx3, () => undefined);
 	const j3 = JSON.parse(readFileSync(join(TMP, "m.json"), "utf8"));
-	ok("addProviderFlow 全部 Esc → 不写", Object.keys(j3.providers).length === 0);
+	ok("addProviderFlow 表单 Esc → 不写", Object.keys(j3.providers).length === 0);
 
-	// === 4. addModelFlow 重复 id ===
-	writeFileSync(join(TMP, "m.json"), JSON.stringify({ providers: { kdapi: { baseUrl: "x", api: "openai-completions", models: [{ id: "existing" }] } } }));
-	await addModelFlow(makeCtx({ inputs: ["existing", "", true] }), "kdapi", () => undefined);
+	// === 4. addProviderFlow proxy 字段写盘 ===
+	writeFileSync(join(TMP, "m.json"), JSON.stringify({ providers: {} }));
+	const ctx4 = makeCtx();
+	ctx4.ui.custom = async <T>(factory: any): Promise<T> => {
+		const comp = factory({}, { fg: (c: string, s: string) => s, bold: (s: string) => s, bg: () => "" }, {}, () => undefined);
+		return { saved: true, values: { id: "proxied", name: "Proxied", baseUrl: "http://a", apiKey: "", api: "openai-completions", authHeader: "no", proxy: "http://127.0.0.1:7890" } } as T;
+	};
+	await addProviderFlow(ctx4, () => undefined);
 	const j4 = JSON.parse(readFileSync(join(TMP, "m.json"), "utf8"));
-	ok("addModelFlow 重复 id 不新增", j4.providers.kdapi.models.length === 1);
+	ok("addProviderFlow proxy 写盘", j4.providers.proxied?.proxy === "http://127.0.0.1:7890");
 
-	// === 5. addModelFlow useDefaults=yes ===
+	// === 5. addModelFlow 已是 stub：不写盘、notify 提及 sync ===
+	let notifyCaptured = "";
+	const ctx5 = makeCtx();
+	ctx5.ui.notify = (msg: string) => { notifyCaptured = msg; };
 	writeFileSync(join(TMP, "m.json"), JSON.stringify({ providers: { kdapi: { baseUrl: "x", api: "openai-completions", models: [] } } }));
-	await addModelFlow(makeCtx({ inputs: ["m-yes", "", true] }), "kdapi", () => undefined);
+	await addModelFlow(ctx5, "kdapi", () => undefined);
 	const j5 = JSON.parse(readFileSync(join(TMP, "m.json"), "utf8"));
-	const m5 = j5.providers.kdapi.models[0];
-	ok("addModelFlow useDefaults=yes 写入", j5.providers.kdapi.models.length === 1);
-	ok("  reasoning=true", m5.reasoning === true);
-	ok("  contextWindow=128000", m5.contextWindow === 128000);
-	ok("  thinkingLevelMap.medium=medium", m5.thinkingLevelMap?.medium === "medium");
-
-	// === 6. addModelFlow useDefaults=no (custom) ===
-	writeFileSync(join(TMP, "m.json"), JSON.stringify({ providers: { kdapi: { baseUrl: "x", api: "openai-completions", models: [] } } }));
-	await addModelFlow(makeCtx({ inputs: ["m-no", "", false, true, "text", "100000", "20000", "（不设 / 用 provider 默认）"] }), "kdapi", () => undefined);
-	const j6 = JSON.parse(readFileSync(join(TMP, "m.json"), "utf8"));
-	const m6 = j6.providers.kdapi.models[0];
-	ok("addModelFlow useDefaults=no custom ctx", m6.contextWindow === 100000);
-	ok("  custom max", m6.maxTokens === 20000);
-	ok("  no thinking map", m6.thinkingLevelMap === undefined);
+	ok("addModelFlow stub 不写盘", j5.providers.kdapi.models.length === 0);
+	ok("addModelFlow stub notify 提及 sync", notifyCaptured.toLowerCase().includes("sync"));
 
 	// === 7. editModelFlow 跑通（用 customReturn 模拟 save）===
 	writeFileSync(join(TMP, "m.json"), JSON.stringify({ providers: { kdapi: { baseUrl: "x", api: "openai-completions", models: [{ id: "m1", reasoning: false, input: ["text"] }] } } }));
