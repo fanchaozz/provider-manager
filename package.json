@@ -10,12 +10,15 @@
     "README_EN.md"
   ],
   "keywords": [
-    "pi",
+    "pi-package",
     "pi-extension",
     "provider",
     "model",
     "ai"
   ],
+  "pi": {
+    "extensions": ["./"]
+  },
   "license": "MIT",
   "author": "fanchaozz <fanchaozz@users.noreply.github.com>",
   "homepage": "https://github.com/fanchaozz/provider-manager#readme",
