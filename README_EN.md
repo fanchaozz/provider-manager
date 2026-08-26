@@ -10,13 +10,31 @@ A pi extension that manages custom providers and models in `~/.pi/agent/models.j
 
 ## Install
 
-`provider-manager` is intended to ship as a pi extension package. From the pi project root:
+The extension source is published at https://github.com/fanchaozz/provider-manager (public). **It is not yet published to npm.**
+
+### Option A: Install from a local path (development / immediate use)
 
 ```bash
-pi install npm:provider-manager       # or local path during development
+# Clone the repository
+git clone https://github.com/fanchaozz/provider-manager.git
+# Symlink (or copy) into pi's extensions directory
+ln -s "$(pwd)/provider-manager" ~/.pi/agent/extensions/provider-manager
+# or: cp -r provider-manager ~/.pi/agent/extensions/
 ```
 
-The extension requires `@earendil-works/pi-coding-agent` (provided by pi). jiti resolves `node_modules` upward, so no separate `npm install` is needed inside the extension directory.
+Alternatively, from your pi project root: `pi install /path/to/provider-manager`.
+
+### Option B: After publishing to npm (recommended for end users)
+
+```bash
+cd provider-manager
+npm login
+npm publish --access public
+```
+
+After that, end users can run `pi install npm:provider-manager`.
+
+The extension depends on `@earendil-works/pi-coding-agent` (shipped with pi). jiti walks up `node_modules`, so **no `npm install` is needed** inside the extension directory.
 
 After install, `~/.pi/agent/provider-manager.json` is auto-created on first load (see [User config](#user-config--provider-managerjson)). Delete it to fall back to the code default.
 

@@ -10,13 +10,32 @@ pi 扩展：通过 TUI 仪表盘、`/providers` 斜杠命令和远端同步流�
 
 ## 安装
 
-本扩展按 pi extension 包发布。在 pi 项目根目录：
+本扩展按 pi extension 包发布。源代码在 https://github.com/fanchaozz/provider-manager（public），**目前没发布到 npm**。
+
+### 方式 A：本地路径安装（开发 / 即时使用）
 
 ```bash
-pi install npm:provider-manager       # 或开发时用本地路径
+# 克隆仓库
+git clone https://github.com/fanchaozz/provider-manager.git
+# 创建符号链接到 pi 扩展目录（Windows 用 mklink /D，macOS / Linux 用 ln -s）
+ln -s "$(pwd)/provider-manager" ~/.pi/agent/extensions/provider-manager
+# 或：复制到扩展目录
+cp -r provider-manager ~/.pi/agent/extensions/
 ```
 
-扩展依赖 `@earendil-works/pi-coding-agent`（pi 自带）。jiti 向上找 `node_modules`，所以**不需要**在扩展目录内 `npm install`。
+或者在 pi 项目里直接 `pi install /path/to/provider-manager`。
+
+### 方式 B：发布到 npm 后（推荐给用户安装）
+
+```bash
+cd provider-manager
+npm login
+npm publish --access public
+```
+
+发布后用户可以 `pi install npm:provider-manager`。
+
+依赖：`@earendil-works/pi-coding-agent`（pi 自带）。jiti 向上找 `node_modules`，所以**不需要**在扩展目录内 `npm install`。
 
 安装后，首次加载时会自动创建 `~/.pi/agent/provider-manager.json`（见 [用户配置](#用户配置--provider-managerjson)）。删除该文件即可回退到代码默认。
 
