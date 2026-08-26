@@ -14,20 +14,6 @@
 pi install npm:@fanchaozz/provider-manager
 ```
 
-包托管在 **npmjs.com**。`pi install` 默认查 npmjs，所以什么都不用配。
-
-### 不可访问 npmjs / 想要开发版
-
-```bash
-git clone https://github.com/fanchaozz/provider-manager.git
-ln -s "$(pwd)/provider-manager" ~/.pi/agent/extensions/provider-manager
-# Windows: mklink /D "%USERPROFILE%\.pi\agent\extensions\provider-manager" "%CD%\provider-manager"
-# 或：复制
-cp -r provider-manager ~/.pi/agent/extensions/
-```
-
-或者在 pi 项目里 `pi install /path/to/provider-manager`。
-
 依赖：`@earendil-works/pi-coding-agent`（pi 自带）。jiti 向上找 `node_modules`，**不需要**在扩展目录内 `npm install`。
 
 安装后，首次加载时会自动创建 `~/.pi/agent/provider-manager.json`（见 [用户配置](#用户配置--provider-managerjson)）。删除该文件即可回退到代码默认。
