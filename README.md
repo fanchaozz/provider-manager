@@ -1,5 +1,7 @@
 # provider-manager
 
+[English](./README_EN.md) | [简体中文](./README.md)
+
 pi 扩展：通过 TUI 仪表盘、`/providers` 斜杠命令和远端同步流程，管理 `~/.pi/agent/models.json` 中的自定义 provider 和 model。
 
 > **范围**：只覆盖 `models.json` —— 本扩展**不**管理内置 provider、**不**切换 model、**不**提供登录 UI。这些请用 pi 内置的 `/model` 和 provider 认证流程。

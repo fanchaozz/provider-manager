@@ -1,5 +1,7 @@
 # provider-manager
 
+[English](./README_EN.md) | [简体中文](./README.md)
+
 A pi extension that manages custom providers and models in `~/.pi/agent/models.json` through a TUI dashboard, a `/providers` slash command, and a sync-from-remote flow.
 
 > **Scope**: only `models.json` is covered — the extension does **not** manage built-in providers, does **not** switch models, and does **not** provide a login UI. Use pi's built-in `/model` and provider auth flow for those.
