@@ -14,27 +14,23 @@
 pi install npm:@fanchaozz/provider-manager
 ```
 
-包托管在 **GitHub Packages**。首次安装时 npm 需要知道这个 registry。把这几行加到用户级 `~/.npmrc`（一次性）：
+包托管在 **npmjs.com**。`pi install` 默认查 npmjs，所以什么都不用配。
 
-```ini
-# ~/.npmrc
-@fanchaozz:registry=https://npm.pkg.github.com/
-//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN
-```
-
-token 只需要 `read:packages` scope（包是 public 的）。之后 `npm install` / `pi install` 对所有 `@fanchaozz/*` 包都不用再配置。
-
-### 如果没法访问 GitHub Packages
+### 不可访问 npmjs / 想要开发版
 
 ```bash
 git clone https://github.com/fanchaozz/provider-manager.git
 ln -s "$(pwd)/provider-manager" ~/.pi/agent/extensions/provider-manager
 # Windows: mklink /D "%USERPROFILE%\.pi\agent\extensions\provider-manager" "%CD%\provider-manager"
+# 或：复制
+cp -r provider-manager ~/.pi/agent/extensions/
 ```
 
-然后重启 pi。扩展每次重载都从软链目录读。
+或者在 pi 项目里 `pi install /path/to/provider-manager`。
 
-首次启动后，`~/.pi/agent/provider-manager.json` 会自动创建。删掉它就回退到内置默认。
+依赖：`@earendil-works/pi-coding-agent`（pi 自带）。jiti 向上找 `node_modules`，**不需要**在扩展目录内 `npm install`。
+
+安装后，首次加载时会自动创建 `~/.pi/agent/provider-manager.json`（见 [用户配置](#用户配置--provider-managerjson)）。删除该文件即可回退到代码默认。
 
 ---
 
@@ -218,7 +214,7 @@ cp ~/.pi/agent/models.json.bak ~/.pi/agent/models.json
 
 ## 故障排查
 
-**`pi install` 报 `E404` 或 "no such package"。** 你的 npm registry 里没有 GitHub Packages。把它加到 `~/.npmrc`（见 [安装](#安装)）或用 git-clone 降级方案。
+**`pi install` 报 `E404` 或 "no such package"。** npm registry 没收到这个包名。先 `npm view @fanchaozz/provider-manager` 看是否发布成功；如果成功还报，检查 `npm config get registry` 输出不是 `npm.pkg.github.com`。
 
 **仪表盘打开是空的。** 你的 `models.json` 里没有自定义 provider。本扩展只管 `models.json` — pi 内置 provider（anthropic / openai / google 等）不显示，用 pi 内置的 `/model`。
 

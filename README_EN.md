@@ -14,27 +14,22 @@ A pi extension that manages custom providers and models in `~/.pi/agent/models.j
 pi install npm:@fanchaozz/provider-manager
 ```
 
-The package is hosted on **GitHub Packages**. The first time you install, npm needs to know about this registry. Add this once to your user-level `~/.npmrc`:
+The package is hosted on **npmjs.com**. `pi install` queries npmjs by default, so no extra config is required.
 
-```ini
-# ~/.npmrc
-@fanchaozz:registry=https://npm.pkg.github.com/
-//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN
-```
-
-The token only needs the `read:packages` scope (it's a public package). After that, `npm install` / `pi install` works for all `@fanchaozz/*` packages without further setup.
-
-### If you can't reach GitHub Packages
+### If you can't reach npmjs / want a development build
 
 ```bash
 git clone https://github.com/fanchaozz/provider-manager.git
 ln -s "$(pwd)/provider-manager" ~/.pi/agent/extensions/provider-manager
-# or, on Windows: mklink /D "%USERPROFILE%\.pi\agent\extensions\provider-manager" "%CD%\provider-manager"
+# Windows: mklink /D "%USERPROFILE%\.pi\agent\extensions\provider-manager" "%CD%\provider-manager"
+# or: cp -r provider-manager ~/.pi/agent/extensions/
 ```
 
-Then re-launch pi. The extension reads from the symlinked directory on every reload.
+Or from your pi project root: `pi install /path/to/provider-manager`.
 
-After the first launch, `~/.pi/agent/provider-manager.json` is auto-created. Delete it to revert to the built-in defaults.
+The extension depends on `@earendil-works/pi-coding-agent` (shipped with pi). jiti walks up `node_modules`, so **no `npm install` is needed** inside the extension directory.
+
+After install, `~/.pi/agent/provider-manager.json` is auto-created on first load (see [User config](#user-config--provider-managerjson)). Delete it to fall back to the code default.
 
 ---
 
@@ -218,7 +213,7 @@ cp ~/.pi/agent/models.json.bak ~/.pi/agent/models.json
 
 ## Troubleshooting
 
-**`pi install` fails with `E404` or "no such package".** GitHub Packages isn't in your npm registry. Add it to `~/.npmrc` (see [Install](#install)) or use the git-clone fallback.
+**`pi install` fails with `E404` or "no such package".** The npm registry doesn't have this package. First run `npm view @fanchaozz/provider-manager` to confirm the publish succeeded; if it has, check `npm config get registry` is not `npm.pkg.github.com`.
 
 **Dashboard opens but is empty.** Your `models.json` has no custom providers. The extension only manages `models.json` — built-in pi providers (anthropic / openai / google / …) are not shown. Use pi's built-in `/model` for those.
 
