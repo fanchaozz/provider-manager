@@ -2,19 +2,19 @@
 
 [English](./README_EN.md) | [简体中文](./README.md)
 
-A pi extension that manages custom providers and models in `~/.pi/agent/models.json` through a TUI dashboard, a `/providers` slash command, and a remote model sync.
+一个 pi 扩展，通过 TUI 仪表盘、`/providers` 斜杠命令和远端同步流程，管理 `~/.pi/agent/models.json` 中的自定义 provider 和 model。
 
-> **Scope**: only `models.json` is covered — the extension does **not** manage built-in providers, does **not** switch models, and does **not** provide a login UI. Use pi's built-in `/model` and provider auth flow for those.
+> **范围**：只覆盖 `models.json` —— 本扩展**不**管理内置 provider、**不**切换 model、**不**提供登录 UI。这些请用 pi 内置的 `/model` 和 provider 认证流程。
 
 ---
 
-## Install
+## 安装
 
 ```bash
 pi install npm:@fanchaozz/provider-manager
 ```
 
-The package is hosted on **GitHub Packages**. The first time you install, npm needs to know about this registry. Add this once to your user-level `~/.npmrc`:
+包托管在 **GitHub Packages**。首次安装时 npm 需要知道这个 registry。把这几行加到用户级 `~/.npmrc`（一次性）：
 
 ```ini
 # ~/.npmrc
@@ -22,96 +22,96 @@ The package is hosted on **GitHub Packages**. The first time you install, npm ne
 //npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN
 ```
 
-The token only needs the `read:packages` scope (it's a public package). After that, `npm install` / `pi install` works for all `@fanchaozz/*` packages without further setup.
+token 只需要 `read:packages` scope（包是 public 的）。之后 `npm install` / `pi install` 对所有 `@fanchaozz/*` 包都不用再配置。
 
-### If you can't reach GitHub Packages
+### 如果没法访问 GitHub Packages
 
 ```bash
 git clone https://github.com/fanchaozz/provider-manager.git
 ln -s "$(pwd)/provider-manager" ~/.pi/agent/extensions/provider-manager
-# or, on Windows: mklink /D "%USERPROFILE%\.pi\agent\extensions\provider-manager" "%CD%\provider-manager"
+# Windows: mklink /D "%USERPROFILE%\.pi\agent\extensions\provider-manager" "%CD%\provider-manager"
 ```
 
-Then re-launch pi. The extension reads from the symlinked directory on every reload.
+然后重启 pi。扩展每次重载都从软链目录读。
 
-After the first launch, `~/.pi/agent/provider-manager.json` is auto-created. Delete it to revert to the built-in defaults.
+首次启动后，`~/.pi/agent/provider-manager.json` 会自动创建。删掉它就回退到内置默认。
 
 ---
 
-## Quick start
+## 快速开始
 
-| Want to… | Do this |
+| 想做什么 | 操作 |
 |---|---|
-| Open the dashboard | `/providers` |
-| List providers + their models | `/providers ls` (filter: `/providers ls kdapi`) |
-| Add a provider | Dashboard, `n` on the Providers pane, or `/providers add [<id>]` |
-| Add a model | Dashboard, switch to Models pane with `Tab`, `n`, or `/providers model <pid> add` |
-| Edit provider / model | Dashboard, `e` |
-| Delete | Dashboard, `d` (confirm dialog) |
-| Pull new model list from a provider's API | Dashboard, `y`, or `/providers sync [<pid>]` |
-| Probe auth + reachability + a 1-token test call | Dashboard, `t` (current model) or `T` (all in provider) |
-| Restore last `.bak` | `/providers reset` |
-| Print command help | `/providers help` |
-| Close dashboard | `q` or `Esc` |
+| 打开仪表盘 | `/providers` |
+| 列出 provider + 它们的 model | `/providers ls`（过滤：`/providers ls kdapi`） |
+| 新增 provider | 仪表盘 Providers 面板按 `n`，或 `/providers add [<id>]` |
+| 新增 model | 仪表盘 `Tab` 切到 Models 面板按 `n`，或 `/providers model <pid> add` |
+| 编辑 provider / model | 仪表盘按 `e` |
+| 删除 | 仪表盘按 `d`（确认对话框） |
+| 从 provider 的 API 拉取新 model 列表 | 仪表盘按 `y`，或 `/providers sync [<pid>]` |
+| 探测 auth + 可达性 + 1-token 测试调用 | 仪表盘 `t`（当前 model）或 `T`（provider 内全部） |
+| 从最近 `.bak` 恢复 | `/providers reset` |
+| 打印命令帮助 | `/providers help` |
+| 关闭仪表盘 | `q` 或 `Esc` |
 
-The sync command is the fastest way to populate a fresh provider: it fetches the remote model list, shows a checklist, and writes back the ones you select.
+`sync` 命令是给全新 provider 填充 model 列表最快的方式：拉取远端 model 列表，显示 checklist，把选中的写回。
 
 ---
 
-## Dashboard
+## 仪表盘
 
-`/providers` opens a two-pane TUI:
+`/providers` 打开两栏 TUI：
 
-- **Left pane** — providers (id + model count)
-- **Right pane** — models of the selected provider (id + `[R]` reasoning / `[I]` image flags + ctx / max)
-- **Detail strip** — raw JSON of the selected row
-- **Footer** — current key bindings
+- **左栏** —— provider（id + model 数）
+- **右栏** —— 选中 provider 的 model（id + `[R]` reasoning / `[I]` image 标记 + ctx / max）
+- **详情条** —— 选中行的原始 JSON
+- **底栏** —— 当前按键说明
 
-### Key bindings
+### 按键绑定
 
-| Key | Action |
+| 键 | 行为 |
 |---|---|
-| `↑↓` / `j k` | Navigate in current pane |
-| `g` / `G` | Jump to top / bottom |
-| `Tab` | Switch between Providers ↔ Models pane |
-| `n` | New: add provider on Providers pane, add model on Models pane |
-| `e` | Edit selected provider / model |
-| `d` | Delete (with confirm dialog) |
-| `y` | Sync (fetch remote model list for selected provider) |
-| `t` / `T` | Probe current model / all models in selected provider |
-| `?` | Toggle help overlay |
-| `q` / `Esc` | Close dashboard |
+| `↑↓` / `j k` | 在当前面板上下移动 |
+| `g` / `G` | 跳到顶 / 底 |
+| `Tab` | 切换 Providers ↔ Models 面板 |
+| `n` | 新增：Providers 面板下加 provider，Models 面板下加 model |
+| `e` | 编辑选中的 provider / model |
+| `d` | 删除（带确认对话框） |
+| `y` | 同步（拉取选中 provider 的远端 model 列表） |
+| `t` / `T` | 探测当前 model / provider 内全部 model |
+| `?` | 切换帮助覆盖层 |
+| `q` / `Esc` | 关闭仪表盘 |
 
-When the provider list is empty, pressing `n` on the Models pane switches to the Providers pane and tells you to create one first.
-
----
-
-## Sync flow
-
-`sync` is the fastest way to add a batch of models. It fetches the remote model list for the selected provider and shows a checklist.
-
-The checklist **shows every model for that provider — both existing and remote new**:
-
-- Existing models are labelled `<id>  (existing)`, default checked. Uncheck to delete.
-- Remote new models are labelled `<id>` only, default unchecked. Check to add.
-
-Press `Enter` to write the result, `Esc` to cancel. On save, the final `models.json` is the union of (checked existing) + (checked new); remote new is preferred over local if both are checked (so you pick up the fresh `reasoning` / `input` / `ctx` / `maxTokens` / `thinkingLevelMap` from the default model config).
+provider 列表为空时，在 Models 面板按 `n` 会切到 Providers 面板并提示先创建一个。
 
 ---
 
-## User config — `provider-manager.json`
+## 同步流程
 
-`~/.pi/agent/provider-manager.json` controls the defaults used when:
-- you answer "yes" to "Use default config?" in the new-model form
-- you sync new models from a remote API
+`sync` 是批量加 model 最快的方式。它会拉取选中 provider 的远端 model 列表并显示 checklist。
 
-Auto-created on first launch. Delete to revert to code defaults.
+checklist **展示该 provider 的所有 model —— existing + remote new 都有**：
+
+- 已有 model 标 `<id>  (existing)`，默认勾选。取消勾选 = 删除。
+- 远端新 model 只标 `<id>`，默认不勾选。勾选 = 添加。
+
+按 `Enter` 写入结果，按 `Esc` 取消。保存时，最终 `models.json` 是（勾选的 existing）+（勾选的 new）的并集；如果某 model 同时被远端和 local 都有并都被勾选，优先用远端定义（这样能拉到最新的 `reasoning` / `input` / `ctx` / `maxTokens` / `thinkingLevelMap` 来自默认 model 配置）。
+
+---
+
+## 用户配置 — `provider-manager.json`
+
+`~/.pi/agent/provider-manager.json` 控制以下场景的默认值：
+- 在新增 model 表单回答 "yes" 到 "Use default config?"
+- 从远端 API 同步新 model
+
+首次启动自动创建。删掉就回退到代码默认。
 
 ### Schema
 
 ```jsonc
 {
-  "_defaultModel": "free-form comment, ignored at runtime",
+  "_defaultModel": "自由格式注释，运行时忽略",
   "defaultModel": {
     "reasoning": true,
     "input": ["text", "image"],
@@ -130,85 +130,85 @@ Auto-created on first launch. Delete to revert to code defaults.
 }
 ```
 
-### Field rules
+### 字段规则
 
-- **`reasoning`** — boolean. If `true`, the model supports extended thinking and `thinkingLevelMap` applies.
-- **`input`** — non-empty array of `"text"` and/or `"image"`. `"text" | "image"` means the model accepts that modality.
-- **`contextWindow`** / **`maxTokens`** — positive integers (tokens).
-- **`thinkingLevelMap`** — object. Any subset of the 7 keys (`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`). A `string` value (e.g. `"medium"`) means that thinking level is enabled and the string is sent to the provider; `null` means disabled. Missing keys are treated as `null`.
+- **`reasoning`** — boolean。`true` 表示该 model 支持扩展思考，`thinkingLevelMap` 才生效。
+- **`input`** — 非空数组，内容是 `"text"` 和/或 `"image"`。`"text" | "image"` 表示 model 接受该模态。
+- **`contextWindow`** / **`maxTokens`** — 正整数（token 数）。
+- **`thinkingLevelMap`** — object。7 个 key（`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`）的任意子集。`string` 值（如 `"medium"`）表示该 thinking level 启用，字符串发给 provider；`null` 表示禁用。缺失的 key 当 `null` 处理。
 
-If the file is missing, malformed JSON, or fails any check, the extension silently falls back to the built-in defaults shown above.
+如果文件缺失、JSON 损坏或校验失败，扩展会静默 fallback 到上面展示的内置默认。
 
-### Why `medium` is highlighted by default
+### 为什么 `medium` 是默认勾选的
 
-When a synced model has `reasoning: true` and `thinkingLevelMap.medium = "medium"`, pi's Shift+Tab thinking-level cycle lands on `medium` by default. Pick whichever level your upstream actually supports — `null` is fine for providers with no extended-thinking knob.
-
----
-
-## Form editor (new model / edit model / new provider)
-
-`addProviderFlow` / `editProviderFlow` / `addModelFlow` / `editModelFlow` / `deleteProviderFlow` / `deleteModelFlow` all share one TUI form (`components.ts:FormEditor`).
-
-### Field types
-
-| Type | Behavior |
-|---|---|
-| `text` | Free text input |
-| `secret` | Free text, rendered masked in the TUI |
-| `number` | Free numeric input, validated on commit |
-| `select` | Options list; press `e` to enter edit mode, `Space` to pick, `↑↓`/`jk` to navigate, `Enter` to commit |
-| `multiselect` | Like `select` but multiple values; `Space` toggles each |
-| `levelmap` | 7 rows (`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`); `Space` toggles each; commit normalizes missing keys to `null` |
-| `readonly` | Display only, cannot edit |
-
-### Key bindings
-
-| Key | Behavior |
-|---|---|
-| `e` / `E` | Enter edit mode (only on `select` / `levelmap` / `multiselect`) |
-| `Esc` / `q` | If editing: exit edit (commit current value). Otherwise: cancel the form |
-| `s` | Save the whole form. Only on non-typeable fields — `s` is a literal char inside `text` / `secret` / `number` / `json` |
-| `Enter` | If editing on a non-input field: commit and exit edit. On a typeable field: commit + move to next field. On a readonly field: save the form |
-| `Space` | If editing on a non-input field: toggle current option |
-| `↑↓` / `j k` | Navigate fields; inside edit mode of a non-input field: navigate options |
-| `Backspace` | Delete last char (typeable fields) |
-
-### New-model flow: "Use default config?"
-
-`addModelFlow` asks once after the name:
-
-- **Yes** — apply `DEFAULT_MODEL_CONFIG` (see [User config](#user-config--provider-managerjson)) and skip the remaining questions
-- **No** — ask reasoning / input / ctx / max / thinking-level-map one by one
-
-`Esc` at any prompt cancels the whole flow (the dashboard is restored automatically).
+同步的 model 若 `reasoning: true` 且 `thinkingLevelMap.medium = "medium"`，pi 的 Shift+Tab 思考级别循环会默认落到 `medium`。根据你上游实际支持的级别选 — 不支持的填 `null` 禁用即可。
 
 ---
 
-## Test a model (`t` / `T`)
+## 表单编辑器（新增/编辑 model/provider）
 
-`t` probes the current model; `T` probes all models in the current provider. Three checks per model:
+`addProviderFlow` / `editProviderFlow` / `addModelFlow` / `editModelFlow` / `deleteProviderFlow` / `deleteModelFlow` 都共用一个 TUI 表单（`components.ts:FormEditor`）。
 
-| Check | What it does | Cost |
+### 字段类型
+
+| 类型 | 行为 |
+|---|---|
+| `text` | 自由文本输入 |
+| `secret` | 自由文本，TUI 渲染时遮罩 |
+| `number` | 自由数字输入，提交时校验 |
+| `select` | 选项列表；按 `e` 进 edit 模式，`Space` 选中，`↑↓`/`jk` 导航，`Enter` 确认 |
+| `multiselect` | 类似 `select` 但可多选；`Space` 切换每项 |
+| `levelmap` | 7 行（`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`）；`Space` 切换每项；提交时归一化缺失的 key 为 `null` |
+| `readonly` | 仅展示，不可编辑 |
+
+### 按键绑定
+
+| 键 | 行为 |
+|---|---|
+| `e` / `E` | 进入 edit 模式（仅 `select` / `levelmap` / `multiselect`） |
+| `Esc` / `q` | edit 中：退出 edit（commit 当前值）。其他：取消整个表单 |
+| `s` | 保存整个表单。仅在 non-typeable 字段生效 — `s` 在 `text` / `secret` / `number` / `json` 里是字符 |
+| `Enter` | edit 中（非输入字段）：commit 并退出 edit。typeable 字段：commit + 移到下一字段。readonly 字段：保存表单 |
+| `Space` | edit 中（非输入字段）：切换当前选项 |
+| `↑↓` / `j k` | 字段间导航；edit 中（非输入字段）：选项间导航 |
+| `Backspace` | 删最后一个字符（typeable 字段） |
+
+### 新增 model 流程："Use default config?"
+
+`addModelFlow` 在 name 之后问一次：
+
+- **Yes** — 应用 `DEFAULT_MODEL_CONFIG`（见 [用户配置](#用户配置--provider-managerjson)），跳过剩余问题
+- **No** — 逐个问 reasoning / input / ctx / max / thinking-level-map
+
+`Esc` 在任何问题中都能取消整个流程（仪表盘自动恢复）。
+
+---
+
+## 探测 model（`t` / `T`）
+
+`t` 探测当前 model；`T` 探测当前 provider 内全部 model。每个 model 三档检查：
+
+| 检查 | 做什么 | 成本 |
 |---|---|---|
-| `auth` | Looks up `~/.pi/agent/auth.json` (or env) for the provider's API key | free |
-| `reachable` | `GET {baseUrl}/models` with a 10 s timeout | free |
-| `generated` | Sends a 4-token prompt (`"Reply with the single word: ok"`) and checks `stopReason ∈ {stop, length}` | ~4 tokens |
+| `auth` | 在 `~/.pi/agent/auth.json`（或环境变量）里查 provider 的 API key | 免费 |
+| `reachable` | `GET {baseUrl}/models`，10s 超时 | 免费 |
+| `generated` | 发 4-token prompt（`"Reply with the single word: ok"`）并检查 `stopReason ∈ {stop, length}` | ~4 token |
 
-Hard caps: `maxTokens` is clamped to 16, timeout 10 s (override with `PI_PROVIDER_TEST_TIMEOUT` env var in seconds). Result is cached in-process until you restart pi.
+硬上限：`maxTokens` 钳到 16；超时 10s（用 `PI_PROVIDER_TEST_TIMEOUT` 环境变量覆盖）。结果缓存在进程内，重启 pi 前有效。
 
 ---
 
-## File layout
+## 文件布局
 
 ```
 ~/.pi/agent/
-├── models.json              ← the file this extension edits
-├── models.json.bak          ← automatic backup taken before every write
+├── models.json              ← 本扩展编辑的文件
+├── models.json.bak          ← 每次写前的自动备份
 └── extensions/
-    └── provider-manager/    ← this extension (installed via pi install / git clone)
+    └── provider-manager/    ← 本扩展（pi install / git clone 安装）
 ```
 
-The extension does not touch anything outside `models.json` and `models.json.bak`. To roll back, restore from `.bak` with `/providers reset` or manually:
+本扩展不触碰 `models.json` 和 `models.json.bak` 之外的文件。要回滚，从 `.bak` 恢复：`/providers reset`，或手动：
 
 ```bash
 cp ~/.pi/agent/models.json.bak ~/.pi/agent/models.json
@@ -216,28 +216,28 @@ cp ~/.pi/agent/models.json.bak ~/.pi/agent/models.json
 
 ---
 
-## Troubleshooting
+## 故障排查
 
-**`pi install` fails with `E404` or "no such package".** GitHub Packages isn't in your npm registry. Add it to `~/.npmrc` (see [Install](#install)) or use the git-clone fallback.
+**`pi install` 报 `E404` 或 "no such package"。** 你的 npm registry 里没有 GitHub Packages。把它加到 `~/.npmrc`（见 [安装](#安装)）或用 git-clone 降级方案。
 
-**Dashboard opens but is empty.** Your `models.json` has no custom providers. The extension only manages `models.json` — built-in pi providers (anthropic / openai / google / …) are not shown. Use pi's built-in `/model` for those.
+**仪表盘打开是空的。** 你的 `models.json` 里没有自定义 provider。本扩展只管 `models.json` — pi 内置 provider（anthropic / openai / google 等）不显示，用 pi 内置的 `/model`。
 
-**Sync errors with `ECONNREFUSED` / `ENOTFOUND`.** The selected provider's `baseUrl` is unreachable. Edit it with `/providers edit <pid>` (or dashboard `e`).
+**Sync 报 `ECONNREFUSED` / `ENOTFOUND`。** 选中 provider 的 `baseUrl` 不通。用 `/providers edit <pid>`（或仪表盘 `e`）改。
 
-**Sync errors with `HTTP 500` / `HTTP 401`.** Wrong `baseUrl` or missing / wrong `apiKey`. Verify in the provider edit form.
+**Sync 报 `HTTP 500` / `HTTP 401`。** `baseUrl` 错或 `apiKey` 缺失/错。在 provider 编辑表单里核对。
 
-**A thinking level I set keeps disappearing.** pi may not support that level on the underlying model — try a different level, or set it to `null` to disable.
+**设的 thinking level 一保存就消失。** pi 可能不支持该 level — 换别的，或者填 `null` 禁用。
 
-**All my customizations in `provider-manager.json` are ignored.** The file is malformed or fails validation (see [Schema](#schema)). The extension falls back to defaults silently. Validate with `node -e "JSON.parse(require('fs').readFileSync(process.env.HOME+'/.pi/agent/provider-manager.json','utf8'))"`.
+**`provider-manager.json` 里的修改全部失效。** 文件损坏或校验失败（见 [Schema](#schema)）。扩展会静默 fallback 默认。校验：`node -e "JSON.parse(require('fs').readFileSync(process.env.HOME+'/.pi/agent/provider-manager.json','utf8'))"`。
 
-**Models added by sync show wrong fields (`ctx=128000` regardless).** The model is using defaults, not the file. The file isn't being read. Check file path: should be exactly `~/.pi/agent/provider-manager.json` (not `~/.pi/agent/providers.json` or similar).
+**Sync 加的 model 字段错（不管什么都 `ctx=128000`）。** model 用的是默认，不是文件。文件没被读。检查路径：必须正好是 `~/.pi/agent/provider-manager.json`（不是 `~/.pi/agent/providers.json` 之类）。
 
-**Dashboard disappears after pressing `n` / `e` / `d` / `y` and Esc.** Should not happen in the current version — the dashboard is restored automatically. If it does, please report with `~/.pi/agent/provider-manager.log` output.
+**按 `n` / `e` / `d` / `y` 后 Esc 仪表盘消失。** 当前版本不应发生 — 仪表盘会自动恢复。如果发生了，请带 `~/.pi/agent/provider-manager.log` 反馈。
 
 ---
 
-## Related
+## 相关
 
-- pi's built-in `/model` — switch the active model
-- pi's built-in provider auth (`/login` or env vars) — set up API keys
-- Backup flow: `/providers reset` or `cp ~/.pi/agent/models.json.bak ~/.pi/agent/models.json`
+- pi 内置 `/model` — 切换当前 model
+- pi 内置 provider auth（`/login` 或环境变量）— 设 API key
+- 备份恢复：`/providers reset` 或 `cp ~/.pi/agent/models.json.bak ~/.pi/agent/models.json`
