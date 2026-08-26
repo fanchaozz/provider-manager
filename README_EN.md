@@ -2,7 +2,7 @@
 
 [English](./README_EN.md) | [简体中文](./README.md)
 
-A pi extension that manages custom providers and models in `~/.pi/agent/models.json` through a TUI dashboard, a `/providers` slash command, and a sync-from-remote flow.
+A pi extension that manages custom providers and models in `~/.pi/agent/models.json` through a TUI dashboard, a `/providers` slash command, and a remote model sync.
 
 > **Scope**: only `models.json` is covered — the extension does **not** manage built-in providers, does **not** switch models, and does **not** provide a login UI. Use pi's built-in `/model` and provider auth flow for those.
 
@@ -10,95 +10,60 @@ A pi extension that manages custom providers and models in `~/.pi/agent/models.j
 
 ## Install
 
-The extension source is published at https://github.com/fanchaozz/provider-manager (public). **It is not yet published to npm.**
-
-### Option A: Install from a local path (development / immediate use)
-
 ```bash
-# Clone the repository
-git clone https://github.com/fanchaozz/provider-manager.git
-# Symlink (or copy) into pi's extensions directory
-ln -s "$(pwd)/provider-manager" ~/.pi/agent/extensions/provider-manager
-# or: cp -r provider-manager ~/.pi/agent/extensions/
-```
-
-Alternatively, from your pi project root: `pi install /path/to/provider-manager`.
-
-### Option B: After publishing to npm (recommended for end users)
-
-```bash
-cd provider-manager
-npm login
-npm publish --access public
-```
-
-After that, end users can run `pi install npm:@fanchaozz/provider-manager`.
-
-### Option C: Install from GitHub Packages (already published automatically)
-
-GitHub Actions publishes every GitHub Release to `https://npm.pkg.github.com/` (see `.github/workflows/publish.yml`). Users configure their npm once, then `npm install`/`pi install` works like any npm package:
-
-```bash
-# One-time: add GitHub Packages registry and a token with `read:packages` scope
-echo "@fanchaozz:registry=https://npm.pkg.github.com/" >> ~/.npmrc
-echo "//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN" >> ~/.npmrc
-
-# Then install:
 pi install npm:@fanchaozz/provider-manager
-# or: npm install @fanchaozz/provider-manager
 ```
 
-The extension depends on `@earendil-works/pi-coding-agent` (shipped with pi). jiti walks up `node_modules`, so **no `npm install` is needed** inside the extension directory.
+The package is hosted on **GitHub Packages**. The first time you install, npm needs to know about this registry. Add this once to your user-level `~/.npmrc`:
 
-After install, `~/.pi/agent/provider-manager.json` is auto-created on first load (see [User config](#user-config--provider-managerjson)). Delete it to fall back to the code default.
+```ini
+# ~/.npmrc
+@fanchaozz:registry=https://npm.pkg.github.com/
+//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN
+```
+
+The token only needs the `read:packages` scope (it's a public package). After that, `npm install` / `pi install` works for all `@fanchaozz/*` packages without further setup.
+
+### If you can't reach GitHub Packages
+
+```bash
+git clone https://github.com/fanchaozz/provider-manager.git
+ln -s "$(pwd)/provider-manager" ~/.pi/agent/extensions/provider-manager
+# or, on Windows: mklink /D "%USERPROFILE%\.pi\agent\extensions\provider-manager" "%CD%\provider-manager"
+```
+
+Then re-launch pi. The extension reads from the symlinked directory on every reload.
+
+After the first launch, `~/.pi/agent/provider-manager.json` is auto-created. Delete it to revert to the built-in defaults.
 
 ---
 
-## File layout
+## Quick start
 
-```
-D:/codex/provider-manager/                ← repo / dev root
-├── index.ts          ( 18)  Entry: registers commands, calls ensureDefaultConfigFile
-├── commands.ts       (313)  /providers command + subcommand dispatch
-├── ui.ts             (643)  Dashboard TUI component (panels, help, key handlers)
-├── forms.ts          (622)  All business flows + default model config + user-level config loader
-├── components.ts     (696)  Reusable TUI components: FormEditor, ModelChecklist, key matcher
-├── store.ts          (282)  models.json I/O: read/write/backup/restore/validate (atomic + mutex)
-├── sync.ts           (253)  Remote model fetch + heuristic field inference + diff/merge
-├── test.ts           (354)  model availability probe: auth + reachable + 1-shot generation
-└── _test_*.mts              Unit tests (run via `node --experimental-strip-types`)
+| Want to… | Do this |
+|---|---|
+| Open the dashboard | `/providers` |
+| List providers + their models | `/providers ls` (filter: `/providers ls kdapi`) |
+| Add a provider | Dashboard, `n` on the Providers pane, or `/providers add [<id>]` |
+| Add a model | Dashboard, switch to Models pane with `Tab`, `n`, or `/providers model <pid> add` |
+| Edit provider / model | Dashboard, `e` |
+| Delete | Dashboard, `d` (confirm dialog) |
+| Pull new model list from a provider's API | Dashboard, `y`, or `/providers sync [<pid>]` |
+| Probe auth + reachability + a 1-token test call | Dashboard, `t` (current model) or `T` (all in provider) |
+| Restore last `.bak` | `/providers reset` |
+| Print command help | `/providers help` |
+| Close dashboard | `q` or `Esc` |
 
-C:/Users/fcmeng/.pi/agent/extensions/provider-manager/  ← deployed copy (md5-identical to repo)
-```
-
----
-
-## Commands
-
-All commands are registered under `/providers` (see `commands.ts`).
-
-| Subcommand | Action | Required TUI? |
-|---|---|---|
-| `/providers` (no args) | Open the TUI dashboard | yes |
-| `/providers ls [filter]` | List custom providers (id, displayName, model count, [reasoning][vision] flags) | no |
-| `/providers add [<id>]` | Open the add-provider form | yes |
-| `/providers remove <id>` | Confirm + delete provider | yes |
-| `/providers model <pid> add` | Open the add-model form for the given provider | yes |
-| `/providers sync [<pid>]` | Fetch remote model list, show merge checklist, write back | yes |
-| `/providers test` / `test-all` | Probe the selected model / all models in the selected provider | yes |
-| `/providers reset` | Restore `models.json` from `models.json.bak` (with confirm) | yes |
-| `/providers help` | Print help | no |
-
-Argument completions: `ls`, `add`, `remove`, `sync`, `test`, `test-all`, `reset`, `help`.
+The sync command is the fastest way to populate a fresh provider: it fetches the remote model list, shows a checklist, and writes back the ones you select.
 
 ---
 
 ## Dashboard
 
-`/providers` opens a two-pane TUI (`ui.ts:Dashboard`):
+`/providers` opens a two-pane TUI:
 
 - **Left pane** — providers (id + model count)
-- **Right pane** — models of the currently selected provider (id + [R][I] flags + ctx / max)
+- **Right pane** — models of the selected provider (id + `[R]` reasoning / `[I]` image flags + ctx / max)
 - **Detail strip** — raw JSON of the selected row
 - **Footer** — current key bindings
 
@@ -113,118 +78,34 @@ Argument completions: `ls`, `add`, `remove`, `sync`, `test`, `test-all`, `reset`
 | `e` | Edit selected provider / model |
 | `d` | Delete (with confirm dialog) |
 | `y` | Sync (fetch remote model list for selected provider) |
-| `t` / `T` | Test selected model / all models in selected provider |
+| `t` / `T` | Probe current model / all models in selected provider |
 | `?` | Toggle help overlay |
 | `q` / `Esc` | Close dashboard |
 
-When the provider list is empty, pressing `n` on the Models pane switches to the Providers pane and notifies you to create one first.
-
----
-
-## Form editor
-
-`/providers add`, `/providers remove`, `/providers model <pid> add`, edit (e), and sync (y) all open the same TUI form component (`components.ts:FormEditor`).
-
-### Form fields
-
-| Type | Behavior |
-|---|---|
-| `text` | Free text input |
-| `secret` | Free text, rendered masked in the TUI |
-| `number` | Free numeric input, validated on commit |
-| `select` | Options list; press `e` to enter edit mode, `Space` to pick, `↑↓`/`jk` to navigate, `Enter` to commit |
-| `multiselect` | Like select but multiple values; `Space` toggles each |
-| `levelmap` | 7 rows (`off`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`); `Space` toggles each; commit normalizes missing keys to `null` |
-| `readonly` | Display only, cannot edit |
-
-### Form key bindings
-
-| Key | Behavior |
-|---|---|
-| `e` / `E` | Enter edit mode (only on `select` / `levelmap` / `multiselect`) |
-| `Esc` / `q` | If editing: exit edit (commit current value). Otherwise: cancel the form |
-| `s` | Save the whole form (commit draft + write). Only on non-typeable fields — `s` is a literal char inside `text`/`secret`/`number`/`json` |
-| `Enter` | If editing on a non-input field: commit and exit edit. On a typeable field: commit + move to next field. On a readonly field: save the form |
-| `Space` | If editing on a non-input field: toggle current option |
-| `↑↓` / `j k` | Navigate fields; inside edit mode of a non-input field: navigate options |
-| `Backspace` | Delete last char (typeable fields) |
-
-### `Use default config?` (new-model only)
-
-`addModelFlow` asks once after `name`:
-
-- Yes → applies `DEFAULT_MODEL_CONFIG` (see [User config](#user-config--provider-managerjson)) and skips the remaining questions
-- No → asks reasoning, input, ctx, max, thinkingLevelMap one by one
+When the provider list is empty, pressing `n` on the Models pane switches to the Providers pane and tells you to create one first.
 
 ---
 
 ## Sync flow
 
-`syncFlow` (in `forms.ts`) fetches the remote model list for the selected provider and shows a checklist. The behavior:
+`sync` is the fastest way to add a batch of models. It fetches the remote model list for the selected provider and shows a checklist.
 
-- The checklist **shows every model in the provider** (both existing and remote new)
-  - existing models: label `<id>  (existing)`, hint `uncheck to remove`, **default checked**
-  - remote new models: label `<id>`, hint `reasoning=… input=… ctx=…`, **default unchecked**
-- User unchecks models to drop, checks new models to add
-- Press `Enter` to confirm, `Esc` to cancel (no changes)
-- On save, the final `models.json` is the union of:
-  - existing models that were checked
-  - new (remote) models that were checked
-  - remote new is preferred over local if both checked (to pick up the fresh `reasoning/input/ctx/max/thinkingLevelMap` from `DEFAULT_MODEL_CONFIG`)
+The checklist **shows every model for that provider — both existing and remote new**:
 
-If 0 models are checked, the sync is a no-op (with a notify).
+- Existing models are labelled `<id>  (existing)`, default checked. Uncheck to delete.
+- Remote new models are labelled `<id>` only, default unchecked. Check to add.
 
----
-
-## Store layer (`store.ts`)
-
-All reads/writes of `~/.pi/agent/models.json` go through `store.ts`.
-
-- **Atomic write** — every `writeModelsJson(next, opts)` does:
-  1. `copyFile` current `models.json` → `models.json.bak` (unless `opts.backup === false`)
-  2. `writeFile` to `models.json.tmp`
-  3. `rename` `models.json.tmp` → `models.json`
-  4. `chmod 0o600` (no-op on Windows)
-- **Write mutex** — a module-level `writeChain: Promise<void>` serializes all writes; one failure doesn't poison the chain
-- **Validation** — `validateProvider` / `validateModel` / `validateAll` check types and required fields
-- **Path overrides** (for tests) — `Symbol.for("pi-provider-manager:models-path-override")` and `…backup-path-override`
-
-> **Caveat**: the mutex serializes file I/O but **not** the read-modify-write pattern that every flow uses. Two concurrent flows can lose data. Single-user CLI is safe; programmatic invocation is not.
-
----
-
-## Sync fetch layer (`sync.ts`)
-
-`sync.ts` provides:
-
-- `fetchListing({ baseUrl, apiKey, apiKind, signal, timeoutMs })` — calls `GET {base}/models` for both OpenAI-compat (`{ data: [...] }`) and Google Generative AI (`{ models: [{ name, ... }] }`). Filters noise (`embed`, `tts`, `whisper`, `dall-e`, `clip`, `moderation`, `image-*`).
-- `inferReasoning(id)` / `inferInput(id)` — name-based heuristics (`o1`/`reasoning`/`thinking`/`deepseek-r`/etc → `reasoning: true`; `vision`/`gpt-4`/`claude`/`gemini` → `input: ["text","image"]`)
-- `inferModel(id, fetched, overrides?)` — produces a `ModelConfig`; default `contextWindow: 128000`, `maxTokens: 16384`, `thinkingLevelMap.medium = "medium"` (others `null`). Honors `overrides.defaults` from `loadDefaultModelConfig`.
-- `diffModels(fetched, existing, overrides?)` — splits fetched into `toAdd` (new) and `skipped` (noise)
-
-`THINKING_PRESETS` is exported from `forms.ts` (5 options including Custom JSON entry) and used in `addModelFlow` only (sync no longer asks the user — it applies defaults).
-
----
-
-## Test layer (`test.ts`)
-
-`t` / `T` in the dashboard call `testModel` / `testProvider` from `test.ts`. Each model probe has three checks:
-
-| Check | What it does | Cost |
-|---|---|---|
-| `auth` | `ctx.modelRegistry.getProviderAuthStatus(provider)` | 0 |
-| `reachable` | `GET {base}/models` (or Google endpoint) with 10s timeout | 0 |
-| `generated` | `ctx.modelRegistry.complete(model, ctx, { signal, maxTokens: 4 })` with prompt `"Reply with the single word: ok"` | ≤ 4 tokens |
-
-Hard cap: `maxTokens` is clamped to 16 (regardless of caller input). 10s timeout (configurable via `PI_PROVIDER_TEST_TIMEOUT` env var). `stopReason === "stop" | "length"` counts as success.
-
-Results are cached in-process in a `Map<"${provider}/${modelId}", TestResult>`. Use `getCached` / `clearCache` from tests.
+Press `Enter` to write the result, `Esc` to cancel. On save, the final `models.json` is the union of (checked existing) + (checked new); remote new is preferred over local if both are checked (so you pick up the fresh `reasoning` / `input` / `ctx` / `maxTokens` / `thinkingLevelMap` from the default model config).
 
 ---
 
 ## User config — `provider-manager.json`
 
-On every pi startup, `ensureDefaultConfigFile` synchronously writes a default `provider-manager.json` to `~/.pi/agent/provider-manager.json` if it doesn't exist. The file controls the defaults used by `addModelFlow` ("Use default config? yes" path) and `syncFlow` (new model fields).
+`~/.pi/agent/provider-manager.json` controls the defaults used when:
+- you answer "yes" to "Use default config?" in the new-model form
+- you sync new models from a remote API
+
+Auto-created on first launch. Delete to revert to code defaults.
 
 ### Schema
 
@@ -249,115 +130,114 @@ On every pi startup, `ensureDefaultConfigFile` synchronously writes a default `p
 }
 ```
 
-### Validation rules
+### Field rules
 
-- `reasoning`: must be boolean
-- `input`: must be non-empty array of `"text"` and/or `"image"`
-- `contextWindow` / `maxTokens`: must be positive finite numbers
-- `thinkingLevelMap`: must be an object (any subset of the 7 keys; missing keys are treated as `null`)
+- **`reasoning`** — boolean. If `true`, the model supports extended thinking and `thinkingLevelMap` applies.
+- **`input`** — non-empty array of `"text"` and/or `"image"`. `"text" | "image"` means the model accepts that modality.
+- **`contextWindow`** / **`maxTokens`** — positive integers (tokens).
+- **`thinkingLevelMap`** — object. Any subset of the 7 keys (`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`). A `string` value (e.g. `"medium"`) means that thinking level is enabled and the string is sent to the provider; `null` means disabled. Missing keys are treated as `null`.
 
-If the file is missing, malformed JSON, or fails any check, `loadDefaultModelConfig` silently falls back to the code default and logs a warning to `console`.
+If the file is missing, malformed JSON, or fails any check, the extension silently falls back to the built-in defaults shown above.
 
-### Path override (for tests)
+### Why `medium` is highlighted by default
 
-`Symbol.for("pi-provider-manager:default-model-path-override")` redirects the path used by `getDefaultModelConfigPath`.
-
----
-
-## Code default (`DEFAULT_MODEL_CONFIG` in `forms.ts`)
-
-When `provider-manager.json` is missing or invalid, the code uses:
-
-```ts
-{
-    reasoning: true,
-    input: ["text", "image"],
-    contextWindow: 128000,
-    maxTokens: 16384,
-    thinkingLevelMap: { off: null, minimal: null, low: null, medium: "medium", high: null, xhigh: null, max: null }
-}
-```
+When a synced model has `reasoning: true` and `thinkingLevelMap.medium = "medium"`, pi's Shift+Tab thinking-level cycle lands on `medium` by default. Pick whichever level your upstream actually supports — `null` is fine for providers with no extended-thinking knob.
 
 ---
 
-## Development
+## Form editor (new model / edit model / new provider)
 
-### Run all tests
+`addProviderFlow` / `editProviderFlow` / `addModelFlow` / `editModelFlow` / `deleteProviderFlow` / `deleteModelFlow` all share one TUI form (`components.ts:FormEditor`).
 
-```bash
-cd D:/codex/provider-manager
-for f in _test_*.mts; do
-  echo "=== $f ==="
-  node --experimental-strip-types --no-warnings "$f" 2>&1 | tail -3
-done
-```
+### Field types
 
-`node --experimental-strip-types` strips TypeScript types at runtime; it does **not** type-check. So `import type { Foo }` is required for any types that are erased but not transitively reachable.
+| Type | Behavior |
+|---|---|
+| `text` | Free text input |
+| `secret` | Free text, rendered masked in the TUI |
+| `number` | Free numeric input, validated on commit |
+| `select` | Options list; press `e` to enter edit mode, `Space` to pick, `↑↓`/`jk` to navigate, `Enter` to commit |
+| `multiselect` | Like `select` but multiple values; `Space` toggles each |
+| `levelmap` | 7 rows (`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`); `Space` toggles each; commit normalizes missing keys to `null` |
+| `readonly` | Display only, cannot edit |
 
-The 13 test files cover:
+### Key bindings
 
-- `forms.ts` exports: `addProviderFlow` / `editProviderFlow` / `deleteProviderFlow` / `addModelFlow` / `editModelFlow` / `deleteModelFlow` / `restoreFromBackupFlow` / `syncFlow` / `ensureDefaultConfigFile` / `loadDefaultModelConfig`
-- `components.ts`: `FormEditor` (all key paths, levelmap, multiselect, s/Esc/Enter gating) and `ModelChecklist`
-- `ui.ts`: `Dashboard` key handling, `runForm` / `runSync` / `runTest` (`__test = true` static flag enables unit-test invocation)
-- `sync.ts`: `fetchListing` / `inferModel` / `diffModels` / `isNoise` / `inferReasoning` / `inferInput` with a mock `fetch` and a mock `ctx`
-- `store.ts`: read/write/backup/restore/validate paths
-- End-to-end audit (`_test_audit_endtoend.mts`): 25 cross-flow assertions including the new merge semantics, default-keep behavior, `s` / `Esc` / customSelect scenarios, ensureDefaultConfigFile idempotency, sync error handling
+| Key | Behavior |
+|---|---|
+| `e` / `E` | Enter edit mode (only on `select` / `levelmap` / `multiselect`) |
+| `Esc` / `q` | If editing: exit edit (commit current value). Otherwise: cancel the form |
+| `s` | Save the whole form. Only on non-typeable fields — `s` is a literal char inside `text` / `secret` / `number` / `json` |
+| `Enter` | If editing on a non-input field: commit and exit edit. On a typeable field: commit + move to next field. On a readonly field: save the form |
+| `Space` | If editing on a non-input field: toggle current option |
+| `↑↓` / `j k` | Navigate fields; inside edit mode of a non-input field: navigate options |
+| `Backspace` | Delete last char (typeable fields) |
 
-### Path overrides (test setup)
+### New-model flow: "Use default config?"
 
-```ts
-(globalThis as any)[Symbol.for("pi-provider-manager:models-path-override")] = "/tmp/.../models.json";
-(globalThis as any)[Symbol.for("pi-provider-manager:backup-path-override")] = "/tmp/.../models.json.bak";
-(globalThis as any)[Symbol.for("pi-provider-manager:default-model-path-override")] = "/tmp/.../pm.json";
-```
+`addModelFlow` asks once after the name:
 
-`store.ts` and `forms.ts` honor these symbols; no other production code does.
+- **Yes** — apply `DEFAULT_MODEL_CONFIG` (see [User config](#user-config--provider-managerjson)) and skip the remaining questions
+- **No** — ask reasoning / input / ctx / max / thinking-level-map one by one
 
-### Deploy after change
-
-```bash
-cp D:/codex/provider-manager/{forms,components,ui,commands,store,sync,test,index}.ts \
-   C:/Users/fcmeng/.pi/agent/extensions/provider-manager/
-md5sum D:/codex/provider-manager/{forms,components,ui}.ts \
-         C:/Users/fcmeng/.pi/agent/extensions/provider-manager/{forms,components,ui}.ts
-```
+`Esc` at any prompt cancels the whole flow (the dashboard is restored automatically).
 
 ---
 
-## Key invariants (worth preserving)
+## Test a model (`t` / `T`)
 
-1. **Atomic write** — every `writeModelsJson` does tmp-write + atomic rename, with `.bak` taken first. Never break this.
-2. **Write mutex** — `writeChain` in `store.ts` is the only thing that prevents concurrent clobber. Don't add `await writeFile` outside `writeModelsJson`.
-3. **No async in `ensureDefaultConfigFile`** — sync (`writeFileSync`) is required so `pi -p` mode doesn't exit before the file is created. Don't revert to async.
-4. **try/finally in dashboard `runForm` / `runSync`** — `onDone?.()` is called in `finally` so the dashboard is always restored after form flow exit, including early Esc-cancel.
-5. **`q` / `s` are literal chars in typeable fields** — only intercept them outside `text`/`secret`/`number`/`json`. Otherwise `apiKey="mysecret"` saves on the `s`.
-6. **Levelmap commit normalizes to 7 keys** — `commitDraft` always writes all 7 `PI_LEVELS` (with `null` for unselected). Don't bypass this in `toggleLevelmapRow`.
-7. **Sync `done` is wired directly to checklist callbacks** — `onConfirm: (sel) => done(new Set(sel))` / `onCancel: () => done(undefined)`. Wrapping in a Promise that the checklist can't reach causes the dialog to hang.
-8. **`ctx.ui.custom(...).catch` must surface errors** — `console.error` + `ctx.ui.notify("xxx error", "error")` so the user can distinguish Esc from a framework crash.
+`t` probes the current model; `T` probes all models in the current provider. Three checks per model:
 
----
-
-## Known limitations / non-goals
-
-- **No built-in provider management** — only `models.json` is read or written
-- **No model switching** — the user uses pi's built-in `/model` (Ctrl+L) for that
-- **No login UI** — API keys are stored as plain text in `models.json` (file is 0o600)
-- **No concurrent-flow safety** — the write mutex covers I/O but not the read-modify-write pattern; programmatic invocation is not safe
-- **No multi-locale** — the codebase mixes Chinese and English in `ctx.ui.notify` calls; pick one before shipping
-- **`s` / `T` footer entries always shown** — even when no provider is selected; cleanup UX is a follow-up
-- **Dashboard `s` key** — only meaningful inside the form editor, not the dashboard itself; add a footer note or hide when not in form context
-
----
-
-## File-by-file API surface
-
-| File | Exports | Purpose |
+| Check | What it does | Cost |
 |---|---|---|
-| `index.ts` | `default function (pi: ExtensionAPI)` | Entry point |
-| `commands.ts` | `registerCommands(pi)` | Wires `/providers` and its subcommands |
-| `ui.ts` | `Dashboard` (class), `openDashboard(ctx)` | TUI dashboard |
-| `forms.ts` | `addProviderFlow`, `editProviderFlow`, `deleteProviderFlow`, `addModelFlow`, `editModelFlow`, `deleteModelFlow`, `restoreFromBackupFlow`, `syncFlow`; `DEFAULT_MODEL_CONFIG`, `getDefaultModelConfigPath`, `ensureDefaultConfigFile`, `loadDefaultModelConfig` | Business flows + config |
-| `components.ts` | `matchesKey`, `FormEditor`, `ModelChecklist`, `PI_LEVELS`, `FormField`, `FormFieldType` | TUI building blocks |
-| `store.ts` | `getModelsJsonPath`, `getBackupPath`, `readModelsJson`, `writeModelsJson`, `restoreBackup`, `backupExists`, `validateProvider`, `validateModel`, `validateAll`, `ModelConfig`, `ProviderConfig`, `ModelsJson`, `ALLOWED_APIS`, `ApiType` | models.json I/O + types + validation |
-| `sync.ts` | `fetchListing`, `inferModel`, `inferReasoning`, `inferInput`, `diffModels`, `isNoise`, `SyncPreset`, `FetchedModel`, `FetchResult`, `ApiKind` | Remote model fetch + heuristics |
-| `test.ts` | `testModel`, `testProvider`, `getCached`, `clearCache`, `TestResult`, `CheckResult`, `TestMode` | Availability probe + cache |
+| `auth` | Looks up `~/.pi/agent/auth.json` (or env) for the provider's API key | free |
+| `reachable` | `GET {baseUrl}/models` with a 10 s timeout | free |
+| `generated` | Sends a 4-token prompt (`"Reply with the single word: ok"`) and checks `stopReason ∈ {stop, length}` | ~4 tokens |
+
+Hard caps: `maxTokens` is clamped to 16, timeout 10 s (override with `PI_PROVIDER_TEST_TIMEOUT` env var in seconds). Result is cached in-process until you restart pi.
+
+---
+
+## File layout
+
+```
+~/.pi/agent/
+├── models.json              ← the file this extension edits
+├── models.json.bak          ← automatic backup taken before every write
+└── extensions/
+    └── provider-manager/    ← this extension (installed via pi install / git clone)
+```
+
+The extension does not touch anything outside `models.json` and `models.json.bak`. To roll back, restore from `.bak` with `/providers reset` or manually:
+
+```bash
+cp ~/.pi/agent/models.json.bak ~/.pi/agent/models.json
+```
+
+---
+
+## Troubleshooting
+
+**`pi install` fails with `E404` or "no such package".** GitHub Packages isn't in your npm registry. Add it to `~/.npmrc` (see [Install](#install)) or use the git-clone fallback.
+
+**Dashboard opens but is empty.** Your `models.json` has no custom providers. The extension only manages `models.json` — built-in pi providers (anthropic / openai / google / …) are not shown. Use pi's built-in `/model` for those.
+
+**Sync errors with `ECONNREFUSED` / `ENOTFOUND`.** The selected provider's `baseUrl` is unreachable. Edit it with `/providers edit <pid>` (or dashboard `e`).
+
+**Sync errors with `HTTP 500` / `HTTP 401`.** Wrong `baseUrl` or missing / wrong `apiKey`. Verify in the provider edit form.
+
+**A thinking level I set keeps disappearing.** pi may not support that level on the underlying model — try a different level, or set it to `null` to disable.
+
+**All my customizations in `provider-manager.json` are ignored.** The file is malformed or fails validation (see [Schema](#schema)). The extension falls back to defaults silently. Validate with `node -e "JSON.parse(require('fs').readFileSync(process.env.HOME+'/.pi/agent/provider-manager.json','utf8'))"`.
+
+**Models added by sync show wrong fields (`ctx=128000` regardless).** The model is using defaults, not the file. The file isn't being read. Check file path: should be exactly `~/.pi/agent/provider-manager.json` (not `~/.pi/agent/providers.json` or similar).
+
+**Dashboard disappears after pressing `n` / `e` / `d` / `y` and Esc.** Should not happen in the current version — the dashboard is restored automatically. If it does, please report with `~/.pi/agent/provider-manager.log` output.
+
+---
+
+## Related
+
+- pi's built-in `/model` — switch the active model
+- pi's built-in provider auth (`/login` or env vars) — set up API keys
+- Backup flow: `/providers reset` or `cp ~/.pi/agent/models.json.bak ~/.pi/agent/models.json`
