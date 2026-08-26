@@ -1,0 +1,14 @@
+# Dependencies (dev only — pi-coding-agent is symlink-copied from pi's node_modules)
+node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs / temp
+*.log
+tmp/
