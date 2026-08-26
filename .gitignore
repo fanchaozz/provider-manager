@@ -1,6 +1,10 @@
 # Dependencies (dev only — pi-coding-agent is symlink-copied from pi's node_modules)
 node_modules/
 
+# Secrets (npm token etc.) — must NEVER be committed
+.npmrc
+*.token
+
 # OS / editor
 .DS_Store
 Thumbs.db

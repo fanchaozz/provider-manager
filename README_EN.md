@@ -32,7 +32,21 @@ npm login
 npm publish --access public
 ```
 
-After that, end users can run `pi install npm:provider-manager`.
+After that, end users can run `pi install npm:@fanchaozz/provider-manager`.
+
+### Option C: Install from GitHub Packages (already published automatically)
+
+GitHub Actions publishes every GitHub Release to `https://npm.pkg.github.com/` (see `.github/workflows/publish.yml`). Users configure their npm once, then `npm install`/`pi install` works like any npm package:
+
+```bash
+# One-time: add GitHub Packages registry and a token with `read:packages` scope
+echo "@fanchaozz:registry=https://npm.pkg.github.com/" >> ~/.npmrc
+echo "//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN" >> ~/.npmrc
+
+# Then install:
+pi install npm:@fanchaozz/provider-manager
+# or: npm install @fanchaozz/provider-manager
+```
 
 The extension depends on `@earendil-works/pi-coding-agent` (shipped with pi). jiti walks up `node_modules`, so **no `npm install` is needed** inside the extension directory.
 

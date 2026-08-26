@@ -33,7 +33,21 @@ npm login
 npm publish --access public
 ```
 
-发布后用户可以 `pi install npm:provider-manager`。
+发布后用户可以 `pi install npm:@fanchaozz/provider-manager`。
+
+### 方式 C：从 GitHub Packages 安装（已自动发布）
+
+GitHub Actions 在每次 GitHub Release 时自动 publish 到 `https://npm.pkg.github.com/`（见 `.github/workflows/publish.yml`）。用户配置一次 npm registry，然后 `npm install` / `pi install` 跟普通 npm 包一样：
+
+```bash
+# 一次性配置：加 GitHub Packages registry 和带 `read:packages` scope 的 token
+echo "@fanchaozz:registry=https://npm.pkg.github.com/" >> ~/.npmrc
+echo "//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN" >> ~/.npmrc
+
+# 然后安装：
+pi install npm:@fanchaozz/provider-manager
+# 或：npm install @fanchaozz/provider-manager
+```
 
 依赖：`@earendil-works/pi-coding-agent`（pi 自带）。jiti 向上找 `node_modules`，所以**不需要**在扩展目录内 `npm install`。
 

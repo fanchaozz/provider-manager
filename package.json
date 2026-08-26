@@ -1,0 +1,33 @@
+{
+  "name": "@fanchaozz/provider-manager",
+  "version": "0.1.0",
+  "description": "A pi extension that manages custom providers and models in ~/.pi/agent/models.json via a TUI dashboard, /providers slash command, and remote model sync.",
+  "type": "module",
+  "main": "index.ts",
+  "files": [
+    "*.ts",
+    "README.md",
+    "README_EN.md"
+  ],
+  "keywords": [
+    "pi",
+    "pi-extension",
+    "provider",
+    "model",
+    "ai"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "scripts": {
+    "test": "for f in _test_*.mts; do node --experimental-strip-types --no-warnings \"$f\" 2>&1 | tail -3; done",
+    "ci:test": "npm install --no-save @earendil-works/pi-coding-agent && for f in _test_*.mts; do node --experimental-strip-types --no-warnings \"$f\" 2>&1 | tail -3; done"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com/"
+  }
+}
