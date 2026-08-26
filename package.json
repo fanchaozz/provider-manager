@@ -17,6 +17,15 @@
     "ai"
   ],
   "license": "MIT",
+  "author": "fanchaozz <fanchaozz@users.noreply.github.com>",
+  "homepage": "https://github.com/fanchaozz/provider-manager#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fanchaozz/provider-manager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fanchaozz/provider-manager/issues"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -28,6 +37,6 @@
     "ci:test": "npm install --no-save @earendil-works/pi-coding-agent && for f in _test_*.mts; do node --experimental-strip-types --no-warnings \"$f\" 2>&1 | tail -3; done"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com/"
+    "access": "public"
   }
 }
