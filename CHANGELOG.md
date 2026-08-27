@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - 模型测试结果通知统一 info 级别：成功/失败均被后续输出覆盖，失败信息不再滞留聊天历史
 - 批量测试（`T` / `/providers test-all`）将全部模型结果合并为单条消息展示，逐模型成败一目了然
+
+## [0.2.1] - 2026-08-27
+
+### Fixed
 - 修复 Zhipu GLM 422：新增模型 `compat.supportsDeveloperRole` 字段（edit 表单可改，默认 `no`），退回 `system` role
 
 ## [0.2.0] - 2026-08-26
