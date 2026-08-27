@@ -222,11 +222,36 @@ async function main() {
 			contextWindow: oldModel.contextWindow ?? 0,
 			maxTokens: oldModel.maxTokens ?? 0,
 			thinkingLevelMap: null,
+			supportsDeveloperRole: "no",
 		}});
 		await editModelFlow(ctx, target, oldModel.id, () => undefined);
 		const updated = (await readModelsJson()).providers[target].models.find((m: any) => m.id === oldModel.id);
 		ok("model id 未变", updated?.id === oldModel.id);
 		ok("model.reasoning 改了", updated?.reasoning === true);
+		ok("compat.supportsDeveloperRole = false", updated?.compat?.supportsDeveloperRole === false);
+	}
+
+	console.log("\n=== editModelFlow：保留已有 compat 字段 ===");
+	{
+		const target = Object.keys((await readModelsJson()).providers)[0]!;
+		const json = await readModelsJson();
+		const modelId = json.providers[target].models[0].id;
+		// 预先给 model 写一个带 custom 字段的 compat
+		const baseModel = json.providers[target].models[0];
+		await writeModelsJson({ ...json, providers: { ...json.providers, [target]: { ...json.providers[target], models: json.providers[target].models.map((m) => m.id === modelId ? { ...m, compat: { supportsDeveloperRole: true, customField: "preserve" } } : m) } } });
+		const ctx = makeMockCtx([], { saved: true, values: {
+			name: "",
+			reasoning: "yes",
+			input: ["text"],
+			contextWindow: 1000,
+			maxTokens: 1000,
+			thinkingLevelMap: null,
+			supportsDeveloperRole: "yes",
+		}});
+		await editModelFlow(ctx, target, modelId, () => undefined);
+		const updated = (await readModelsJson()).providers[target].models.find((m: any) => m.id === modelId);
+		ok("supportsDeveloperRole 改 true", updated?.compat?.supportsDeveloperRole === true);
+		ok("其他 compat 字段保留 (customField)", (updated?.compat as any)?.customField === "preserve");
 	}
 
 	console.log("\n=== deleteModelFlow：confirm=true ===");

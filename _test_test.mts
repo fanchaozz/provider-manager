@@ -214,7 +214,7 @@ clearCache();
 }
 {
 	mockFetch(() => new Response("{}", { status: 200 }));
-	// maxTokens 硬上限 16
+	// maxTokens 硬上限 16（避免模型生成过多 token）
 	const calls: number[] = [];
 	const ctx2 = makeCtx();
 	(ctx2.modelRegistry as any).complete = async (_m: any, _c: any, opts: any) => {

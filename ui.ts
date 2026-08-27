@@ -35,6 +35,7 @@ type ModelRow = {
 	// 详情面板需要从 raw ModelConfig 透传
 	thinkingLevelMap?: Partial<Record<"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max", string | null>>;
 	cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	compat?: Record<string, unknown>;
 };
 
 type ProviderRow = {
@@ -209,6 +210,7 @@ function buildProviders(ctx: ExtensionCommandContext, json: ModelsJson): { provi
 				// 详情面板需要这些字段
 				thinkingLevelMap: m.thinkingLevelMap,
 				cost: m.cost,
+				compat: m.compat,
 			})),
 		};
 	});
@@ -659,6 +661,16 @@ class Dashboard {
 				lines.push(`    output:       $${cost.output}/M`);
 				if (cost.cacheRead) lines.push(`    cache read:   $${cost.cacheRead}/M`);
 				if (cost.cacheWrite) lines.push(`    cache write:  $${cost.cacheWrite}/M`);
+			}
+			// compat：Zhipu GLM 等 OpenAI-compat 网关拒收 role:"developer"（会返 422）。为 false 时 pi 用 system role。
+			const compat = m.compat;
+			if (compat && typeof compat === "object") {
+				lines.push("");
+				lines.push(th.fg("muted", "  Compat"));
+				if (typeof (compat as any).supportsDeveloperRole === "boolean") {
+					const sdr = (compat as any).supportsDeveloperRole;
+					lines.push(`    supportsDeveloperRole: ${sdr ? th.fg("success", "yes") : th.fg("warning", "no")}`);
+				}
 			}
 		}
 		return lines.map((l) => truncateToWidth(l, width));

@@ -15,7 +15,7 @@ writeFileSync(MODELS_PATH, JSON.stringify({
 		kdapi: {
 			baseUrl: "http://10.168.2.110:23000/v1", api: "openai-completions", apiKey: "sk-test",
 			models: [
-				{ id: "minimax-m3", contextWindow: 1_000_000, maxTokens: 128_000, reasoning: true,  input: ["text"] },
+				{ id: "minimax-m3", contextWindow: 1_000_000, maxTokens: 128_000, reasoning: true,  input: ["text"], compat: { supportsDeveloperRole: false } },
 				{ id: "minimax-m2", contextWindow: 256_000,   maxTokens: 32_000,  reasoning: false, input: ["text", "image"] },
 			],
 		},
@@ -106,6 +106,18 @@ console.log("\n=== model detail: thinkingLevelMap 单行显示 enabled 的 level
 	// 未勾选的 level 不出现名字（off/minimal/xhigh/max 不应该出现在 Thinking 行）
 	const tlLine = joined.split("\n").find((l) => /Thinking levels:/.test(l)) || "";
 	ok("未 enabled 的 level 不出现",  !/\boff\b|\bminimal\b|\bxhigh\b|\bmax\b/.test(tlLine.replace(/Thinking levels:.*$/, "")));
+}
+
+console.log("\n=== model detail: compat.supportsDeveloperRole ===");
+{
+	// kdapi 是 sorted index 1（'agnes' < 'kdapi'）。切到 kdapi → model pane。
+	const d9 = new Dashboard(mockCtx, th, () => {});
+	await d9.init();
+	d9.handleInput("j");           // agnes (0) → kdapi (1)
+	d9.handleInput("\x1b[D");      // → model pane
+	const joined9 = d9.render(120).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+	ok("含 Compat 分组",  /  Compat/.test(joined9));
+	ok("supportsDeveloperRole: no 显式标 no",  /supportsDeveloperRole:\s*no/.test(joined9));
 }
 
 console.log("\n=== model detail: 全部 null 时 Thinking levels 不显示 ===");

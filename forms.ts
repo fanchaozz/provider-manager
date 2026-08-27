@@ -36,6 +36,7 @@ export const DEFAULT_MODEL_CONFIG: {
     contextWindow: number;
     maxTokens: number;
     thinkingLevelMap: ModelConfig["thinkingLevelMap"];
+    compat: { supportsDeveloperRole: boolean };
 } = {
     reasoning: true,
     input: ["text", "image"],
@@ -50,6 +51,8 @@ export const DEFAULT_MODEL_CONFIG: {
         xhigh: null,
         max: null,
     },
+    // Zhipu GLM 等 OpenAI-compat 网关拒收 role:"developer"（会返 422）。默认 false → pi 用 system role。
+    compat: { supportsDeveloperRole: false },
 };
 
 // ============================================================================
@@ -88,13 +91,19 @@ export function ensureDefaultConfigFile(): string | null {
 }
 
 function isValidDefaultModelConfig(v: any): v is typeof DEFAULT_MODEL_CONFIG {
+	const compatOk = !v.compat
+		|| (typeof v.compat === "object" && !Array.isArray(v.compat) && (
+			v.compat.supportsDeveloperRole === undefined
+			|| typeof v.compat.supportsDeveloperRole === "boolean"
+		));
 	return (
 		v && typeof v === "object" &&
 		typeof v.reasoning === "boolean" &&
 		Array.isArray(v.input) && v.input.every((x: any) => x === "text" || x === "image") && v.input.length > 0 &&
 		typeof v.contextWindow === "number" && v.contextWindow > 0 && Number.isFinite(v.contextWindow) &&
 		typeof v.maxTokens === "number" && v.maxTokens > 0 && Number.isFinite(v.maxTokens) &&
-		v.thinkingLevelMap && typeof v.thinkingLevelMap === "object" && !Array.isArray(v.thinkingLevelMap)
+		v.thinkingLevelMap && typeof v.thinkingLevelMap === "object" && !Array.isArray(v.thinkingLevelMap) &&
+		compatOk
 	);
 }
 
@@ -109,7 +118,11 @@ export function loadDefaultModelConfig(): typeof DEFAULT_MODEL_CONFIG {
 		const raw = readFileSync(p, "utf8");
 		const parsed = JSON.parse(raw);
 		const cfg = parsed?.defaultModel;
-		if (isValidDefaultModelConfig(cfg)) return cfg;
+		if (isValidDefaultModelConfig(cfg)) {
+			// 补全缺失的 compat（老 config 没有这个字段时默认为 false）
+			if (!cfg.compat) cfg.compat = { supportsDeveloperRole: false };
+			return cfg;
+		}
 	} catch {
 		// 回退到代码默认
 	}
@@ -363,6 +376,8 @@ export async function editModelFlow(
         { key: "contextWindow", label: "contextWindow", type: "number", validate: (v) => typeof v === "number" && v >= 0 ? null : "must be non-negative" },
         { key: "maxTokens", label: "maxTokens", type: "number", validate: (v) => typeof v === "number" && v >= 0 ? null : "must be non-negative" },
         { key: "thinkingLevelMap", label: "thinkingLevelMap", type: "levelmap", hint: "(empty = remove)" },
+        // Zhipu GLM 等 OpenAI-compat 网关不接受 role:"developer" (会返 422)。默认 no 用 system role。
+        { key: "supportsDeveloperRole", label: "supportsDeveloperRole (compat)", type: "select", options: ["no", "yes"], hint: "Zhipu GLM 等需 no (用 system role)" },
     ];
     const initial: Record<string, unknown> = {
         name: cur.name ?? "",
@@ -371,6 +386,7 @@ export async function editModelFlow(
         contextWindow: cur.contextWindow ?? 0,
         maxTokens: cur.maxTokens ?? 0,
         thinkingLevelMap: cur.thinkingLevelMap ?? null,
+        supportsDeveloperRole: (cur.compat as any)?.supportsDeveloperRole === true ? "yes" : "no",
     };
     const result = await runFormEditor(ctx, `Edit model "${providerId}/${modelId}"`, fields, initial);
     if (!result.saved) { onDone?.(); return; }
@@ -383,6 +399,7 @@ export async function editModelFlow(
         contextWindow: (v.contextWindow as number) || undefined,
         maxTokens: (v.maxTokens as number) || undefined,
         thinkingLevelMap: (v.thinkingLevelMap as Record<string, unknown> | null) ?? undefined,
+        compat: { ...(cur.compat ?? {}), supportsDeveloperRole: v.supportsDeveloperRole === "yes" },
     };
     const newModels = (prov.models ?? []).map((m) => (m.id === modelId ? next : m));
     const newProv: ProviderConfig = { ...prov, models: newModels };
