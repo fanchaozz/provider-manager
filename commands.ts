@@ -259,7 +259,8 @@ async function testCommand(ctx: ExtensionCommandContext, arg: string): Promise<v
 	}
 
 	const result = await testModel({ ctx: ctx as any, provider, model, mode: "full" });
-	ctx.ui.notify(formatTestResult(result), result.ok ? "info" : "warning");
+	// 同步 dashboard：测试结果统一 info（showStatus 可覆盖），失败语义靠文本 ✗ fail 前缀表达
+	ctx.ui.notify(formatTestResult(result), "info");
 }
 
 /** 批量测某 provider 全部 model；无参数时取第一个 provider。 */
@@ -295,7 +296,8 @@ async function testAllCommand(ctx: ExtensionCommandContext, providerId: string |
 		mode: "full",
 		concurrency: 3,
 	});
-	for (const r of results) {
-		ctx.ui.notify(formatTestResult(r), r.ok ? "info" : "warning");
-	}
+	// 批量结果拼成一条 notify：逐条 notify 会被 showStatus 原地覆盖，只残留最后一条
+	const okCount = results.filter((r) => r.ok).length;
+	const summary = results.map((r) => formatTestResult(r)).join("\n\n") + `\n${provider}: ${okCount}/${results.length} ok`;
+	ctx.ui.notify(summary, "info");
 }

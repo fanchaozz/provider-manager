@@ -416,9 +416,10 @@ class Dashboard {
 			let okCount = 0;
 			for (const r of results) {
 				if (r.ok) okCount++;
-				ctx.ui.notify(formatTestResult(r), r.ok ? "info" : "warning");
 			}
-			ctx.ui.notify(`${provider.id}: ${okCount}/${results.length} ok`, okCount === results.length ? "success" : "warning");
+			// 批量结果拼成一条 notify：逐条 notify 会被 showStatus 原地覆盖，只残留汇总行
+			const summary = results.map((r) => formatTestResult(r)).join("\n\n") + `\n${provider.id}: ${okCount}/${results.length} ok`;
+			ctx.ui.notify(summary, "info");
 		} else {
 			// t: 测当前 pane 的 model（provider pane 测第一个 model；model pane 测当前 model）
 			let modelId: string | undefined;
@@ -430,7 +431,8 @@ class Dashboard {
 			if (!modelId) { ctx.ui.notify(`${provider.id} 无 model`, "warning"); return; }
 			ctx.ui.notify(`testing ${provider.id}/${modelId}...`, "info");
 			const r = await testModel({ ctx, provider: provider.id, model: modelId, mode: "full" });
-			ctx.ui.notify(formatTestResult(r), r.ok ? "success" : "warning");
+			// 同上：统一 info 避免滞留
+			ctx.ui.notify(formatTestResult(r), "info");
 		}
 		this.invalidate();
 	}
