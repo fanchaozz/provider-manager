@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.3] - 2026-08-27
+
+### Fixed
+- 修复 `~/.pi/agent/models.json` 为空时 dashboard 无法新增 provider 的问题：原来 `n` 键的处理在导航 if/else 链之外、且被 `if (items.length === 0) { /* noop */ }` 吞掉，导致无 provider 时按 `n` 毫无反应。现已将 `n` 上移到导航判定之前，并补全 `pane === "model"` 时的提示。
+- 空 providers 状态下底部键位提示改为 `n add first provider · ? help · q close`，去掉 `↑↓/jk nav` / `Enter edit` / `d del` / `t test` 等在空态无意义的项。
+- 新增 `_test_empty_state.mts` 覆盖空态渲染与 `n` 触发表单的路径。
+
 ## [0.2.2] - 2026-08-27
 
 ### Fixed

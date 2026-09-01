@@ -291,6 +291,16 @@ class Dashboard {
 			this.invalidate();
 			return;
 		}
+		// 空列表下"新增 provider"是唯一可执行动作，必须在导航块之前判定。
+		// 否则 n 会落到 else if 链外的 if (items.length === 0) 分支被吞掉。
+		if (data === "n") {
+			if (this.pane === "provider") {
+				void this.runForm(addProviderFlow);
+			} else {
+				this.ctx.ui.notify("model 不能直接新增，请用 sync（按 y）", "info");
+			}
+			return;
+		}
 		// 导航（循环：第 1 个按 ↑ 跳最后，最后按 ↓ 跳第 1 个）
 		const items = this.pane === "provider" ? this.providers : (this.providers[this.providerIndex]?.models ?? []);
 		if (items.length === 0) {
@@ -312,13 +322,6 @@ class Dashboard {
 				const prov = this.providers[this.providerIndex];
 				const m = prov?.models[this.modelIndex];
 				if (prov && m) void this.runForm(editModelFlow, prov.id, m.id);
-			}
-		} else if (data === "n") {
-			// n: 新增 provider。仅 provider 面板支持；model 面板的 n 跳到 sync 提示。
-			if (this.pane === "provider") {
-				void this.runForm(addProviderFlow);
-			} else {
-				this.ctx.ui.notify("model 不能直接新增，请用 sync（按 y）", "info");
 			}
 		} else if (data === "d") {
 			const prov = this.providers[this.providerIndex];
@@ -478,6 +481,9 @@ class Dashboard {
 		lines.push(th.fg("borderMuted", "─".repeat(width)));
 		if (this.help) {
 			lines.push(...this.renderHelp(width, th));
+		} else if (this.providers.length === 0) {
+			// 空态：导航/编辑/同步/删除 均无意义，只保留有效动作
+			lines.push(th.fg("dim", " n add first provider · ? help · q close"));
 		} else {
 			const parts = ["↑↓/jk nav", "←→ pane"];
 			if (this.pane === "provider") parts.push("n new", "Enter edit", "y sync");
