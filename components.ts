@@ -36,6 +36,77 @@ export function matchesKey(data: string, key: string): boolean {
 }
 
 // ============================================================================
+// Bracketed-paste 助手
+// =========================================================================
+//
+// pi 框架的 Ctrl+V / Alt+V / 右键粘贴都走 readClipboardText()，拿到的文本
+// 用 ESC[200~ ... ESC[201~ 包后调 formEditor.handleInput。我们之前的
+// handleInput 只认 “单字节 + charCode 32-126”，遇到这个多字节序列会
+// 静默丢，与 “pwsh 下能选中文/多行 key 但 ctrl+v 无反应” 症状一致。
+//
+// Feed 每次输入 chunk；返回 true = 本 chunk 被粘贴状态完全消费（调用方退出）。
+// 返回 false = 不是粘贴；调用方走常规路径。
+// 跨多次 feed() 累积；遇到结束标记时调一次 onPaste(干净文本) 并清状态。
+// 当本 chunk 结束后还有剩余字符（同一 chunk 里在结束标记后还有正常输入），
+// 存到 `lastRest`，调用方可用 `consumeRest()` 拿到并重调。
+export class PasteBuffer {
+	private isInPaste = false;
+	private buf = "";
+	private lastRest = "";
+	/** Called once when a complete bracketed paste arrives. */
+	onPaste: (cleanText: string) => void = () => {};
+
+	feed(data: string): boolean {
+		// 粘贴中：累积到 buf 等结束标记
+		if (this.isInPaste) {
+			this.buf += data;
+			const end = this.buf.indexOf("\x1b[201~");
+			if (end >= 0) {
+				const text = this.buf.substring(0, end);
+				const rest = this.buf.substring(end + 6);
+				this.isInPaste = false;
+				this.buf = "";
+				this.onPaste(sanitizePasteText(text));
+				if (rest) this.lastRest = rest;
+			}
+			return true;
+		}
+		// 未粘贴：检测开始标记
+		if (data.includes("\x1b[200~")) {
+			this.isInPaste = true;
+			this.buf = "";
+			const after = data.replace("\x1b[200~", "");
+			// 同一 chunk 里也可能有结束标记
+			const end = after.indexOf("\x1b[201~");
+			if (end >= 0) {
+				const text = after.substring(0, end);
+				const rest = after.substring(end + 6);
+				this.isInPaste = false;
+				this.onPaste(sanitizePasteText(text));
+				if (rest) this.lastRest = rest;
+				return true;
+			}
+			this.buf = after;
+			return true;
+		}
+		return false;  // 非粘贴，调用方走常规路径
+	}
+
+	/** 取走上次 paste 之后的剩余字符（如果有）。调用后清空。 */
+	consumeRest(): string {
+		const r = this.lastRest;
+		this.lastRest = "";
+		return r;
+	}
+}
+
+/** 清理粘贴文本：去 \r\n / \r / \n；\t → 4 空格。
+ *  对齐 pi-tui Input.handlePaste 的行为。单行字段不需要换行。 */
+function sanitizePasteText(s: string): string {
+	return s.replace(/\r\n/g, "").replace(/\r/g, "").replace(/\n/g, "").replace(/\t/g, "    ");
+}
+
+// ============================================================================
 // ModelChecklist — 多选 checklist（sync 用）
 // ============================================================================
 
@@ -64,6 +135,8 @@ export class ModelChecklist {
 	private onCancel: () => void;
 	private cachedWidth = -1;
 	private cachedLines: string[] = [];
+	/** 括包粘贴缓冲：pi 框架的 Ctrl+V / Alt+V / 右键粘贴会用 ESC[200~..ESC[201~ 包后 call handleInput。 */
+	private pasteBuf = new PasteBuffer();
 	/** search 输入框的当前内容。同步起作用、可被全打印字符 / Backspace 修改。 */
 	private query = "";
 
@@ -89,6 +162,15 @@ export class ModelChecklist {
 			if (opts.preSelect && !opts.preSelect(it)) continue;
 			this.selected.add(it.id);
 		}
+		// 粘贴多字符进 search 输入框（如粘贴 apiKey / model id 过滤）
+		this.pasteBuf.onPaste = (text) => {
+			if (!text) return;
+			this.query += text;
+			const v = this.visibleItems();
+			if (this.cursor >= v.length) this.cursor = Math.max(0, v.length - 1);
+			this.top = 0;
+			this.invalidate();
+		};
 	}
 
 	/** query 作用后的可见项列表。空 query ＝全量；disabled 始终隐藏。 */
@@ -112,6 +194,12 @@ export class ModelChecklist {
 	}
 
 	handleInput(data: string): void {
+		// 括包粘贴：Ctrl+V / Alt+V / 右键粘走 PasteBuffer
+		if (this.pasteBuf.feed(data)) {
+			const rest = this.pasteBuf.consumeRest();
+			if (rest) this.processRest(rest);
+			return;
+		}
 		if (matchesKey(data, "escape") || data === "q") {
 			this.onCancel();
 			return;
@@ -176,6 +264,46 @@ export class ModelChecklist {
 		if (data.length === 1 && data.charCodeAt(0) >= 32 && data.charCodeAt(0) < 127) {
 			this.query += data;
 			// query 变了重算
+			const v2 = this.visibleItems();
+			if (this.cursor >= v2.length) this.cursor = Math.max(0, v2.length - 1);
+			this.top = 0;
+			this.invalidate();
+		}
+	}
+
+	/** 处理括包粘贴后剩余的字符串：按字符逐个调 handleInput（不走 PasteBuffer 路径）。 */
+	private processRest(rest: string): void {
+		for (const ch of rest) {
+			// 直接走常规路径。上面 handleInput 的 pasteBuf.feed 在这个深度返回 false（同一实例状态不嵌套）
+			this.dispatchChar(ch);
+		}
+	}
+
+	/** 单个字符的常规处理（从 handleInput 拆出，给 processRest 复用）。
+	 *  只处理 “单可打印字符” / Space / Backspace；其他键（多字节转义序列、Enter 等）不响应。 */
+	private dispatchChar(ch: string): void {
+		if (matchesKey(ch, "backspace")) {
+			if (this.query.length > 0) {
+				this.query = this.query.slice(0, -1);
+				const v2 = this.visibleItems();
+				if (this.cursor >= v2.length) this.cursor = Math.max(0, v2.length - 1);
+				this.top = 0;
+				this.invalidate();
+			}
+			return;
+		}
+		if (ch === " ") {
+			const visible = this.visibleItems();
+			const it = visible[this.cursor];
+			if (it && !it.disabled) {
+				if (this.selected.has(it.id)) this.selected.delete(it.id);
+				else this.selected.add(it.id);
+				this.invalidate();
+			}
+			return;
+		}
+		if (ch.length === 1 && ch.charCodeAt(0) >= 32 && ch.charCodeAt(0) < 127) {
+			this.query += ch;
 			const v2 = this.visibleItems();
 			if (this.cursor >= v2.length) this.cursor = Math.max(0, v2.length - 1);
 			this.top = 0;
@@ -384,6 +512,8 @@ export class FormEditor<T extends Record<string, unknown>> {
 	private onCancel: () => void;
 	private cachedWidth = -1;
 	private cachedLines: string[] = [];
+	/** 括包粘贴缓冲：pi 框架的 Ctrl+V / Alt+V / 右键粘贴会用 ESC[200~..ESC[201~ 包后 call handleInput。 */
+	private pasteBuf = new PasteBuffer();
 
 	constructor(opts: {
 		title: string;
@@ -402,6 +532,29 @@ export class FormEditor<T extends Record<string, unknown>> {
 		this.onCancel = opts.onCancel;
 		this.draft = this.currentValueAsString();
 		this.draftIsOriginal = true;
+		// 粘贴：view 模式自动进 edit（避免被 view 模式接货的选中不动）；仅 typeable 字段响应
+		this.pasteBuf.onPaste = (text) => {
+			if (!text) return;
+			const f0 = this.fields[this.cursor];
+			const isTypeable = f0 && (f0.type === "text" || f0.type === "secret" || f0.type === "number" || f0.type === "json");
+			if (!isTypeable) return;
+			if (!this.editing) {
+				// secret：跟 Enter 走同路径——草稿重置为原值，未修改标记
+				if (f0.type === "secret") {
+					const orig = (this.values as any)[f0.key];
+					this.draft = (orig === undefined || orig === null) ? "" : String(orig);
+					this.draftIsOriginal = true;
+				}
+				this.editing = true;
+			}
+			// number：过滤非数字，避免误粘 "123abc"；secret / text / json 原样拼
+			const chunk = f0.type === "number" ? text.replace(/[^0-9]/g, "") : text;
+			if (!chunk) return;
+			if (f0.type === "number" && this.draftIsOriginal) this.draft = chunk;  // 首次输入覆盖
+			else this.draft += chunk;
+			this.draftIsOriginal = false;
+			this.invalidate();
+		};
 	}
 
 	private currentValueAsString(): string {
@@ -519,6 +672,12 @@ export class FormEditor<T extends Record<string, unknown>> {
 	}
 
 	handleInput(data: string): void {
+		// 括包粘贴：Ctrl+V / Alt+V / 右键粘走 PasteBuffer（onPaste 检查 editing + typeable）
+		if (this.pasteBuf.feed(data)) {
+			const rest = this.pasteBuf.consumeRest();
+			if (rest) this.processRest(rest);
+			return;
+		}
 		const f0 = this.fields[this.cursor];
 		const isNonInput = f0?.type === "select" || f0?.type === "levelmap" || f0?.type === "multiselect";
 		const isTypeable = f0 && (f0.type === "text" || f0.type === "secret" || f0.type === "number" || f0.type === "json");
@@ -690,6 +849,34 @@ export class FormEditor<T extends Record<string, unknown>> {
 			this.draftIsOriginal = false;
 			this.invalidate();
 			return;
+		}
+	}
+
+	/** 处理括包粘贴后剩余的字符串：按字符逐个调 handleInput（不走 PasteBuffer 路径）。 */
+	private processRest(rest: string): void {
+		for (const ch of rest) this.dispatchChar(ch);
+	}
+
+	/** 单个字符的常规处理（仅 typeable 字符 / Backspace）。其他键不响应。 */
+	private dispatchChar(ch: string): void {
+		const f0 = this.fields[this.cursor];
+		const isTypeable = f0 && (f0.type === "text" || f0.type === "secret" || f0.type === "number" || f0.type === "json");
+		if (matchesKey(ch, "backspace")) {
+			if (!this.editing || !isTypeable) return;
+			if (this.draft.length > 0) this.draft = this.draft.slice(0, -1);
+			this.draftIsOriginal = false;
+			this.invalidate();
+			return;
+		}
+		if (!this.editing || !isTypeable) return;
+		if (ch.length === 1 && ch.charCodeAt(0) >= 32 && ch.charCodeAt(0) < 127) {
+			if (f0?.type === "number" && /^\d$/.test(ch) && this.draftIsOriginal) {
+				this.draft = ch;
+			} else {
+				this.draft += ch;
+			}
+			this.draftIsOriginal = false;
+			this.invalidate();
 		}
 	}
 

@@ -1,6 +1,6 @@
 {
   "name": "@fanchaozz/provider-manager",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A pi extension that manages custom providers and models in ~/.pi/agent/models.json via a TUI dashboard, /providers slash command, and remote model sync.",
   "type": "module",
   "main": "index.ts",

@@ -3,6 +3,11 @@
 All notable changes to this project are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] - 2026-09-01
+
+### Fixed
+- **pi 中 Ctrl+V / Alt+V / 右键粘贴在 FormEditor / ModelChecklist 不生效**：原 handleInput 只认 “单字节 + charCode 32-126”，pi 框架调 readClipboardText() 后会拿 ESC[200~..ESC[201~ 包后调 handleInput，这个多字节序列被静默丢 → “ctrl+v 无反应” 表现。引入 PasteBuffer（跨多 chunk 累积 + 换行/\r/\t 清理 + 同 chunk 起止后剩余字符拆给调用方常规路径），FormEditor / ModelChecklist 起始都接粘贴。`text` / `secret` / `json` 字段拼到 draft（view 模式自动进 edit）；`number` 过滤非数字；`select` / `levelmap` / `multiselect` / `readonly` 不接粘贴。Windows pwsh 下调 Alt+V 可生效，macOS / Linux / zellij 下 Ctrl+V 走同一路径。
+
 ## [1.0.0] - 2026-09-01
 
 ### Added

@@ -281,6 +281,60 @@ async function main() {
 		});
 		ok("maxRows=999 → clamp 到 <= 200", (comp2 as any).maxRows <= 200);
 	}
+
+	console.log("\n=== ModelChecklist: 括包粘贴（Ctrl+V / Alt+V / 右键）===");
+	{
+		// 完整一块：start + content + end 进同一次 handleInput（pi-tui 走法）
+		const comp = new ModelChecklist({
+			title: "Paste",
+			items: [{ id: "a" }, { id: "b" }, { id: "abc" }],
+			theme,
+			onConfirm: () => {},
+			onCancel: () => {},
+		});
+		comp.handleInput("\x1b[200~abc\x1b[201~");
+		ok("完整一块粘贴 → query = 'abc'", (comp as any).query === "abc");
+		ok("过滤后只剩 'abc'（1 项）", (comp as any).visibleItems().length === 1);
+		ok("过滤后首项是 abc", (comp as any).visibleItems()[0].id === "abc");
+
+		// 跨多次：分 3 块送进（模拟大文本被 node 拆 chunk）
+		const comp2 = new ModelChecklist({
+			title: "Paste2",
+			items: [{ id: "x" }, { id: "y" }],
+			theme,
+			onConfirm: () => {},
+			onCancel: () => {},
+		});
+		comp2.handleInput("\x1b[200~hello");
+		ok("仅 start → query 仍为空（未完成）", (comp2 as any).query === "");
+		comp2.handleInput(" wo");
+		ok("中段 → query 仍为空", (comp2 as any).query === "");
+		comp2.handleInput("rld\x1b[201~");
+		ok("结束时合并 → query = 'hello world'", (comp2 as any).query === "hello world");
+
+		// 清理换行 / \r / \t
+		const comp3 = new ModelChecklist({
+			title: "Paste3",
+			items: [{ id: "z" }],
+			theme,
+			onConfirm: () => {},
+			onCancel: () => {},
+		});
+		comp3.handleInput("\x1b[200~li\nne\ttwo\x1b[201~");
+		ok("\\n 去掉", (comp3 as any).query === "line    two");
+		ok("\\t 变 4 空格", (comp3 as any).query.includes("    "));
+
+		// 单 chunk 含多 start/end（递归处理剩余）
+		const comp4 = new ModelChecklist({
+			title: "Paste4",
+			items: [{ id: "p" }],
+			theme,
+			onConfirm: () => {},
+			onCancel: () => {},
+		});
+		comp4.handleInput("\x1b[200~foo\x1b[201~bar");
+		ok("首段粘贴 'foo' + 剩余 'bar' 进 query/query/search", (comp4 as any).query === "foobar");
+	}
 }
 
 main().catch((err) => { console.error("FATAL:", err); process.exit(1); });

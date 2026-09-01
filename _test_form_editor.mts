@@ -415,6 +415,58 @@ async function main() {
 		t.send("\x1b[A");
 		ok("首 ↑ → 2（反向循环）", (t.comp as any).cursor === 2);
 	}
+
+	console.log("\n=== 括包粘贴（pi Ctrl+V / Alt+V / 右键）===");
+	{
+		// text 字段：view 模式粘贴自动进 edit + 拼到 draft
+		const fields: FormField[] = [
+			{ key: "name", label: "name", type: "text" },
+			{ key: "n", label: "n", type: "number" },
+			{ key: "s", label: "s", type: "select", options: ["x", "y"] },
+		];
+		const t = make(fields, { name: "orig", n: 0, s: "x" });
+
+		// view 模式粘贴：自动进 edit + 拼到 draft
+		t.send("\x1b[200~PASTED\x1b[201~");
+		ok("view 模式粘贴 → 自动进 editing=true", t.getEditing() === true);
+		ok("view 模式 text 粘贴 → draft = orig + 'PASTED'（拼到末尾）", (t.comp as any).draft === "origPASTED");
+
+		// 继续粘贴：仍在 edit 态 + 拼到 draft
+		t.send("\x1b[200~hello world\x1b[201~");
+		ok("edit + text 粘贴 → draft += 'hello world'", (t.comp as any).draft === "origPASTEDhello world");
+
+		// 跨多 chunk
+		t.send("\x1b[200~part1");
+		ok("text 仅 start → draft 不变", (t.comp as any).draft === "origPASTEDhello world");
+		t.send("part2\x1b[201~");
+		ok("text 结束合并 → draft += part1part2", (t.comp as any).draft === "origPASTEDhello worldpart1part2");
+
+		// 换行被清理
+		t.send("\x1b[200~li\nne\x1b[201~");
+		ok("text 换行被去掉", (t.comp as any).draft === "origPASTEDhello worldpart1part2line");
+
+		// number 字段：过滤非数字
+		t.send("\r");  // exit edit name
+		t.send("\x1b[B");  // ↓ 到 number
+		t.send("\x1b[200~42abc99\x1b[201~");
+		ok("number 粘贴 → 过滤非数字", (t.comp as any).draft === "4299");
+
+		// select 字段：粘贴被忽略（非 typeable）
+		t.send("\r");  // exit edit number
+		t.send("\x1b[B");  // ↓ 到 select
+		const draftBeforeSelect = (t.comp as any).draft;
+		t.send("\x1b[200~anything\x1b[201~");
+		ok("select 字段粘贴 → draft 不变（不是 typeable）", (t.comp as any).draft === draftBeforeSelect);
+
+		// secret 字段：粘贴与单 char 走同路径（append）。要全替换需先 Backspace 清空。
+		const secretFields: FormField[] = [
+			{ key: "apiKey", label: "apiKey", type: "secret" },
+		];
+		const t2 = make(secretFields, { apiKey: "oldkey" });
+		t2.send("\x1b[200~newkey\x1b[201~");
+		ok("secret 粘贴 → draft = oldkey + newkey（与单 char 一致：append）", (t2.comp as any).draft === "oldkeynewkey");
+		ok("secret 粘贴 → draftIsOriginal=false（标记已改）", (t2.comp as any).draftIsOriginal === false);
+	}
 }
 
 main().catch((err) => { console.error("FATAL:", err); process.exit(1); });
