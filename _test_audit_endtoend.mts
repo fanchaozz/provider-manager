@@ -92,15 +92,15 @@ async function main() {
 	const j4 = JSON.parse(readFileSync(join(TMP, "m.json"), "utf8"));
 	ok("addProviderFlow proxy 写盘", j4.providers.proxied?.proxy === "http://127.0.0.1:7890");
 
-	// === 5. addModelFlow 已是 stub：不写盘、notify 提及 sync ===
+	// === 5. addModelFlow 恢复：套模板可添加 model（sync 拉不到时使用）
+	// mock 路径：confirm=undefined（Esc 取消）→ 不写盘
 	let notifyCaptured = "";
 	const ctx5 = makeCtx();
 	ctx5.ui.notify = (msg: string) => { notifyCaptured = msg; };
 	writeFileSync(join(TMP, "m.json"), JSON.stringify({ providers: { kdapi: { baseUrl: "x", api: "openai-completions", models: [] } } }));
 	await addModelFlow(ctx5, "kdapi", () => undefined);
 	const j5 = JSON.parse(readFileSync(join(TMP, "m.json"), "utf8"));
-	ok("addModelFlow stub 不写盘", j5.providers.kdapi.models.length === 0);
-	ok("addModelFlow stub notify 提及 sync", notifyCaptured.toLowerCase().includes("sync"));
+	ok("addModelFlow Esc 取消不写盘", j5.providers.kdapi.models.length === 0);
 
 	// === 7. editModelFlow 跑通（用 customReturn 模拟 save）===
 	writeFileSync(join(TMP, "m.json"), JSON.stringify({ providers: { kdapi: { baseUrl: "x", api: "openai-completions", models: [{ id: "m1", reasoning: false, input: ["text"] }] } } }));

@@ -80,7 +80,8 @@ export function inferInput(id: string): ("text" | "image")[] {
 }
 
 /** 把 FetchedModel 变成 ModelConfig。缺省值以 DEFAULT_MODEL_CONFIG 为准（reasoning=yes / input=[text,image] / ctx/max / thinkingLevelMap.medium=medium），
- *  启发式仅在缺省为 no 时下调（比如「明显不是 reasoning」）。可选 3 个参传入覆盖上下文窗口 / max / defaults。 */
+ *  启发式仅在缺省为 no 时下调（比如「明显不是 reasoning」）。可选 3 个参传入覆盖上下文窗口 / max / defaults。
+ *  compat 同步拷默认（用户模板里已带 supportsDeveloperRole=false，新增 model 不应丢这项） */
 export function inferModel(id: string, fetched: FetchedModel, overrides?: { contextWindow?: number; maxTokens?: number; defaults?: typeof DEFAULT_MODEL_CONFIG }): ModelConfig {
 	const cfg = overrides?.defaults ?? DEFAULT_MODEL_CONFIG;
 	const heuristicReasoning = inferReasoning(id);
@@ -95,6 +96,7 @@ export function inferModel(id: string, fetched: FetchedModel, overrides?: { cont
 		contextWindow: overrides?.contextWindow ?? cfg.contextWindow,
 		maxTokens: overrides?.maxTokens ?? cfg.maxTokens,
 		thinkingLevelMap: { ...cfg.thinkingLevelMap },
+		compat: cfg.compat ? { ...cfg.compat } : undefined,
 	};
 }
 

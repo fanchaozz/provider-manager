@@ -83,6 +83,18 @@ The checklist **shows every model for that provider — both existing and remote
 
 Press `Enter` to write the result, `Esc` to cancel. On save, the final `models.json` is the union of (checked existing) + (checked new); remote new is preferred over local (so you pick up the fresh `reasoning` / `input` / `ctx` / `maxTokens` / `thinkingLevelMap`).
 
+**The checklist mirrors pi's `/models` selector**, so 100+ models stay manageable:
+
+- **Always-visible search input** at the top with a `> ` prompt. Every printable character (a / i / g / G, etc.) is appended to the search query — no shortcut clashes.
+- **Viewport scrolling**: 8 rows by default. `⋮ N more below` / `⋮ N hidden` mark scroll boundaries.
+- **Pinned first item**: when the cursor scrolls past the first page, the first item stays at the top with a `(top)` label.
+- **Wrap-around navigation**: `↑` / `↓` cycle at the top / bottom; `j` / `k` are aliases.
+- **Space toggles** the current row's selection, also inside a filter.
+- **`selected / total selected` summary** at the top.
+- **`(current/total)` position indicator** at the bottom (filter context when active).
+
+Viewport size is overridable via `~/.pi/agent/provider-manager.json#syncViewportSize` (5–200, falls back to default 8 if out of range).
+
 **Newly added models' fields come from `~/.pi/agent/provider-manager.json`'s `defaultModel` block** (not the code default) — this is the `loadDefaultModelConfig()` behavior. Edit that file before sync to customise the model template.
 
 **proxy field**: a provider's edit form accepts a `proxy` URL (e.g. `http://127.0.0.1:7890`). On sync it's set as `HTTPS_PROXY` / `HTTP_PROXY` env vars and restored after the request. Other concurrent fetches in the same process will see the same proxy while it is set (env is process-global; sync runs at most one fetch at a time).

@@ -6,8 +6,10 @@ import { tmpdir } from "node:os";
 const TMP_DIR = mkdtempSync(join(tmpdir(), "pi-pm-test-"));
 const MODELS_PATH = join(TMP_DIR, "models.json");
 const BAK_PATH = join(TMP_DIR, "models.json.bak");
+const PM_PATH = join(TMP_DIR, "provider-manager.json");
 (globalThis as any)[Symbol.for("pi-provider-manager:models-path-override")] = MODELS_PATH;
 (globalThis as any)[Symbol.for("pi-provider-manager:backup-path-override")] = BAK_PATH;
+(globalThis as any)[Symbol.for("pi-provider-manager:default-model-path-override")] = PM_PATH;
 
 import { readModelsJson, writeModelsJson, restoreBackup, backupExists } from "./store.ts";
 import {
@@ -195,13 +197,95 @@ async function main() {
 		ok("providers 未变", Object.keys(after).length === Object.keys(before).length);
 	}
 
-	console.log("\n=== addModelFlow：已是 stub，通知 sync ===");
+	console.log("\n=== addModelFlow：useDefault=yes，套模板（带 compat）===");
 	{
 		const target = Object.keys((await readModelsJson()).providers)[0]!;
+		const ctx = makeMockCtx(
+			[],  // confirm(yes) → boolean true；mock 会 shift 出一个值，但 confirm 拿 [0] 还是 [1]？看 queue 序
+			{ saved: true, values: { id: "gpt-test", name: "GPT Test" } },
+		);
+		// 手动喂 confirm=true：mock 的 confirm 会拿 queue[0] = undefined → 返 undefined（取消）.
+		// 改用直接传 confirmReturn 路径？这里用 addModelFlow 之前把 queue 改成 [true]：
+		(ctx as any).__queue.unshift(true);
+		await addModelFlow(ctx as any, target, () => undefined);
+		const models = (await readModelsJson()).providers[target].models;
+		const m = models.find((mm: any) => mm.id === "gpt-test");
+		ok("gpt-test 写盘", !!m);
+		ok("compat.supportsDeveloperRole = false（默认不丢）", m?.compat?.supportsDeveloperRole === false);
+		ok("reasoning = true（默认）", m?.reasoning === true);
+		ok("input 含 image（默认）", Array.isArray(m?.input) && m.input.includes("image"));
+		// 套 pm.json 里的 user defaults（隔离后 = 代码默认 128000/16384）。但 pm.json 可能是用户 global 默认的快照，
+		// 所以不锁具体数值，只锁 "是合理数 + thinkingLevelMap.medium === medium"。
+		ok("contextWindow > 0（套模板）", typeof m?.contextWindow === "number" && m.contextWindow > 0);
+		ok("maxTokens > 0（套模板）", typeof m?.maxTokens === "number" && m.maxTokens > 0);
+		ok("thinkingLevelMap.medium = medium（默认）", m?.thinkingLevelMap?.medium === "medium");
+		ok("name 透传", m?.name === "GPT Test");
+	}
+
+	console.log("\n=== addModelFlow：useDefault=no，逐项提示 ===");
+	{
+		const target = Object.keys((await readModelsJson()).providers)[0]!;
+		const ctx = makeMockCtx(
+			[],
+			{ saved: true, values: {
+				id: "manual-model",
+				name: "",
+				reasoning: "no",
+				input: ["text"],
+				contextWindow: 64000,
+				maxTokens: 8192,
+				thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: null, xhigh: null, max: null },
+				supportsDeveloperRole: "no",
+			} },
+		);
+		(ctx as any).__queue.unshift(false);  // confirm=no
+		await addModelFlow(ctx as any, target, () => undefined);
+		const models = (await readModelsJson()).providers[target].models;
+		const m = models.find((mm: any) => mm.id === "manual-model");
+		ok("manual-model 写盘", !!m);
+		ok("reasoning = no（输入）", m?.reasoning === false);
+		ok("input = [text]（无 image）", JSON.stringify(m?.input) === '["text"]');
+		ok("contextWindow = 64000（输入）", m?.contextWindow === 64000);
+		ok("maxTokens = 8192（输入）", m?.maxTokens === 8192);
+		ok("thinkingLevelMap.low = low（输入）", m?.thinkingLevelMap?.low === "low");
+		ok("compat.supportsDeveloperRole = false（输入 no）", m?.compat?.supportsDeveloperRole === false);
+	}
+
+	console.log("\n=== addModelFlow：id 重复，notify 报错且不写盘 ===");
+	{
+		// 预先往 provider 上挂一个 old-model，模拟“已有同名 model”场景
+		const target = Object.keys((await readModelsJson()).providers)[0]!;
+		await writeModelsJson({
+			providers: {
+				[target]: { ...(await readModelsJson()).providers[target], models: [{ id: "old-model" }] },
+			},
+		}, { backup: false });
+		const ctx = makeMockCtx(
+			[],
+			{ saved: true, values: { id: "old-model", name: "" } },  // id 与已存在的 old-model 冲突
+		);
+		(ctx as any).__queue.unshift(true);  // useDefault
+		const before = (await readModelsJson()).providers[target].models.length;
+		await addModelFlow(ctx as any, target, () => undefined);
+		const after = (await readModelsJson()).providers[target].models.length;
+		ok("未新增 model（before === after）", before === after);
+		ok("notify 报错", ctx.__notifyLog.some((m: string) => m.includes("already exists") || m.includes("error")));
+	}
+
+	console.log("\n=== addModelFlow：Esc 取消 confirm → 不写盘 ===");
+	{
+		const target = Object.keys((await readModelsJson()).providers)[0]!;
+		const ctx = makeMockCtx([]);  // confirm 拿 undefined → cancel
+		await addModelFlow(ctx as any, target, () => undefined);
+		const models = (await readModelsJson()).providers[target].models;
+		ok("未新增 model", !models.some((m: any) => m.id === "esc-cancel-model"));
+	}
+
+	console.log("\n=== addModelFlow：provider 不存在 → 报错 ===");
+	{
 		const ctx = makeMockCtx([]);
-		await addModelFlow(ctx, target, () => undefined);
-		ok("notify 提及 sync", ctx.__notifyLog.some((m: string) => m.toLowerCase().includes("sync")));
-		ok("未在 disk 新增 model", !((await readModelsJson()).providers[target].models ?? []).some((m: any) => m.id === "gpt-test"));
+		await addModelFlow(ctx as any, "nonexistent", () => undefined);
+		ok("notify 报错不存在", ctx.__notifyLog.some((m: string) => m.toLowerCase().includes("不存在") || m.toLowerCase().includes("does not exist")));
 	}
 
 	console.log("\n=== editModelFlow：局部更新 ===");

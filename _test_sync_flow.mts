@@ -25,6 +25,7 @@ function makeMockCtx(opts: {
 	inputQueue?: any[];
 	confirmQueue?: any[];
 	customReturn?: any;   // for ui.custom（checklist）
+	customCancel?: boolean; // 模拟用户在 checklist 里 Esc 取消（走 onCancel）
 }, fetcher?: (url: string) => any) {
 	const sq = [...(opts.selectQueue ?? [])];
 	const iq = [...(opts.inputQueue ?? [])];
@@ -60,7 +61,10 @@ function makeMockCtx(opts: {
 				};
 				const comp = factory({}, fakeTheme, {}, fakeDone);
 				// 模拟 pi 调用流程：pi 等组件触发 done。这里让组件主动调 onConfirm / onCancel。
-				if (comp && typeof comp.onConfirm === "function") {
+				if (opts.customCancel) {
+					// Esc 取消：让 pi 收到 undefined
+					if (typeof comp.onCancel === "function") comp.onCancel();
+				} else if (comp && typeof comp.onConfirm === "function") {
 					// 应用 customSelect override（如果设了）
 					if (comp.selected instanceof Set && opts.customSelect !== undefined) {
 						comp.selected = new Set(opts.customSelect);
@@ -170,38 +174,66 @@ async function main() {
 	}
 
 	// ============================================================
-	// 4. checklist 返回空数组（用户取消所有）
+	// 4. checklist 返回空数组（用户取消所有 → Enter 提交 = 清空该 provider 的 models）
+	//    启动时 provider 已有 2 个 model；uncheck 全部后 Enter。
+	//    预期：provider.models 被清空（不是 “cancelled” 跳过写盘）
 	// ============================================================
-	console.log("\n=== syncFlow: 取消所有（checklist 返回空）===");
+	console.log("\n=== syncFlow: 取消所有（多 model）===");
 	{
-		await writeModelsJson({ providers: { kdapi: { baseUrl: "http://x", api: "openai-completions", models: [] } } }, { backup: false });
+		await writeModelsJson({ providers: { kdapi: { baseUrl: "http://x", api: "openai-completions", models: [{ id: "keep-a" }, { id: "keep-b" }] } } }, { backup: false });
 		const ctx = makeMockCtx({
-			customSelect: [],
+			customSelect: [],  // user unchecks all
 			confirmQueue: [],
-		}, () => new Response(JSON.stringify({ data: [{ id: "gpt-5" }] }), { status: 200, headers: { "content-type": "application/json" } }));
+		}, () => new Response(JSON.stringify({ data: [{ id: "remote-1" }] }), { status: 200, headers: { "content-type": "application/json" } }));
 		try {
 			await syncFlow(ctx as any, { sourceProviderId: "kdapi" });
 			const json = await readModelsJson();
-			ok("没选任何 → 全部删除", (json.providers.kdapi?.models ?? []).length === 0);
+			ok("uncheck 全部 → provider.models 被清空", (json.providers.kdapi?.models ?? []).length === 0);
+			ok("provider 本身仍存在", !!json.providers.kdapi);
 		} finally {
 			ctx.restoreFetch();
 		}
 	}
 
 	// ============================================================
-	// 5. checklist 返回 null（用户 Esc 取消）
+
+	// ============================================================
+	// 4b. 单 model 场景：uncheck 后 Enter → 清空
+	// ============================================================
+	console.log("\n=== syncFlow: 取消所有（单 model）===");
+	{
+		await writeModelsJson({ providers: { kdapi: { baseUrl: "http://x", api: "openai-completions", models: [{ id: "only-model" }] } } }, { backup: false });
+		const ctx = makeMockCtx({
+			customSelect: [],
+			confirmQueue: [],
+		}, () => new Response(JSON.stringify({ data: [{ id: "only-model" }] }), { status: 200, headers: { "content-type": "application/json" } }));
+		try {
+			await syncFlow(ctx as any, { sourceProviderId: "kdapi" });
+			const json = await readModelsJson();
+			ok("单 model uncheck → provider.models 被清空", (json.providers.kdapi?.models ?? []).length === 0);
+		} finally {
+			ctx.restoreFetch();
+		}
+	}
+
+	// ============================================================
+	// 5. checklist 返回 null（用户 Esc 取消） → 不写盘，保持原状
 	// ============================================================
 	console.log("\n=== syncFlow: checklist Esc（返回 null）===");
 	{
-		await writeModelsJson({ providers: { kdapi: { baseUrl: "http://x", api: "openai-completions", models: [] } } }, { backup: false });
+		// 启动时 provider 已有 2 个 model；Esc 取消 → 这 2 个 model 保留。
+		await writeModelsJson({ providers: { kdapi: { baseUrl: "http://x", api: "openai-completions", models: [{ id: "keep-me" }, { id: "also-keep" }] } } }, { backup: false });
 		const ctx = makeMockCtx({
-			customSelect: [],  // 模拟勾选面板返回空数组（等同于取消所有选项）
+			customCancel: true,  // 模拟用户 Esc 取消（走 onCancel，pi 收到 undefined）
 			confirmQueue: [],
 		}, () => new Response(JSON.stringify({ data: [{ id: "gpt-5" }] }), { status: 200, headers: { "content-type": "application/json" } }));
 		try {
 			await syncFlow(ctx as any, { sourceProviderId: "kdapi" });
 			const json = await readModelsJson();
-			ok("Esc 取消 → 无写盘", (json.providers.kdapi?.models ?? []).length === 0);
+			const models = json.providers.kdapi?.models ?? [];
+			ok("Esc 取消 → 原有 model 保留 (keep-me)", models.some((m: any) => m.id === "keep-me"));
+			ok("Esc 取消 → 原有 model 保留 (also-keep)", models.some((m: any) => m.id === "also-keep"));
+			ok("Esc 取消 → 远端 model 未写入", !models.some((m: any) => m.id === "gpt-5"));
 		} finally {
 			ctx.restoreFetch();
 		}
@@ -314,6 +346,8 @@ async function main() {
 			ok("gpt-brand-new 已加", !!m);
 			ok("contextWindow = 128000（inferModel DEFAULT_MODEL_CONFIG）", m?.contextWindow === 128000);
 			ok("maxTokens = 16384（inferModel DEFAULT_MODEL_CONFIG）", m?.maxTokens === 16384);
+			ok("compat.supportsDeveloperRole = false（默认不应丢）", m?.compat?.supportsDeveloperRole === false);
+			ok("compat 字段存在（不省略）", m?.compat !== undefined && m?.compat !== null);
 		} finally {
 			ctx.restoreFetch();
 		}
@@ -322,8 +356,9 @@ async function main() {
 	// ============================================================
 	// 12. sync 只展示远端列表，不展示 existing；existing 不被删
 	// ============================================================
-	console.log("\n=== syncFlow: only remote shown, existing preserved ===");
+	console.log("\n=== syncFlow: existing 仅 1 个、远端也返 1 个同名，uncheck → existing 被删 ===");
 	{
+		// 启动：existing = gpt-old。远端仅返 gpt-old。用户不勾选任何 → Enter 提交 → 清空
 		await writeModelsJson({ providers: { kdapi: { baseUrl: "http://x", api: "openai-completions", models: [{ id: "gpt-old" }] } } }, { backup: false });
 		const ctx = makeMockCtx({
 			customSelect: [],  // 不勾选任何远端 model
@@ -332,8 +367,8 @@ async function main() {
 			await syncFlow(ctx as any, { sourceProviderId: "kdapi" });
 			const json = await readModelsJson();
 			const models = json.providers.kdapi?.models ?? [];
-			ok("不勾 → 0 新 model 加入（existing 仍 1 个）", models.length === 1);
-			ok("existing gpt-old 保留", models.some((m: any) => m.id === "gpt-old"));
+			ok("不勾 → existing 也被删（0 个 model）", models.length === 0);
+			ok("gpt-old 也不在", !models.some((m: any) => m.id === "gpt-old"));
 		} finally {
 			ctx.restoreFetch();
 		}

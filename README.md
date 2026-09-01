@@ -31,7 +31,7 @@ pi install npm:@fanchaozz/provider-manager
 | 打开仪表盘 | `/providers` |
 | 列出 provider + 它们的 model | `/providers ls`（过滤：`/providers ls kdapi`） |
 | 新增 provider | 仪表盘 Providers 面板按 `n`，或 `/providers add [<id>]` |
-| 新增 / 删除 model | **仅通过 sync**（仪表盘 Models 面板按 `y`）。model 不可手动新增 |
+| 新增 / 删除 model | **通过 sync**（仪表盘 Models 面板按 `y`），或 **手动新增**（按 `n`，sync 拉不到时使用模板） |
 | 编辑 provider / model | 仪表盘选中后按 `Enter`（表单里 Enter 进入字段 edit、确认） |
 | 删除 | 仪表盘按 `d`（确认对话框） |
 | 从 provider 的 API 拉取新 model 列表 | 仪表盘按 `y`，或 `/providers sync [<pid>]` |
@@ -40,7 +40,7 @@ pi install npm:@fanchaozz/provider-manager
 | 打印命令帮助 | `/providers help` |
 | 关闭仪表盘 | `q` 或 `Esc` |
 
-`sync` 命令是给全新 provider 填充 model 列表最快的方式：拉取远端 model 列表，显示 checklist，把选中的写回。**model 只能通过 sync 增删**（仪表盘 `n` 在 model 面板已停用）。
+`sync` 命令是给全新 provider 填充 model 列表最快的方式：拉取远端 model 列表，显示 checklist，把选中的写回。sync 不到时（离线上游 / 私有部署 / 不支持 `/models`）可以**手动新增**：仪表盘 Model 面板按 `n`，使用 `~/.pi/agent/provider-manager.json#defaultModel` 模板（`compat.supportsDeveloperRole:false` 也保留不丢）。
 
 ---
 
@@ -60,7 +60,7 @@ pi install npm:@fanchaozz/provider-manager
 | `↑↓` / `j k` | 在当前面板上下移动 |
 | `g` / `G` | 跳到顶 / 底 |
 | `←` / `→` | 切换 Providers ↔ Models 面板 |
-| `n` | **仅 Providers 面板**：新增 provider。Model 面板已停用（model 只能 sync） |
+| `n` | **Providers 面板**：新增 provider。**Models 面板**：手动新增 model（sync 不到时；走 `defaultModel` 模板） |
 | `Enter` | 选中行进入 edit 表单（Provider 或 Model） |
 | `d` | 删除（带确认对话框） |
 | `y` | 同步（拉取选中 provider 的远端 model 列表） |
@@ -74,7 +74,7 @@ pi install npm:@fanchaozz/provider-manager
 
 ## 同步流程
 
-`sync` 是批量加 model 的唯一方式。它会拉取选中 provider 的远端 model 列表并显示 checklist。
+`sync` 是批量加 model 的最快方式。它会拉取选中 provider 的远端 model 列表并显示 checklist。sync 拉不到时（离线上游 / 私有部署 / 不支持 `/models`）可以用 **手动新增**（仪表盘 Model 面板 `n`）。
 
 **checklist 展示该 provider 的所有 model**（existing + remote new 都有）：
 
@@ -82,6 +82,19 @@ pi install npm:@fanchaozz/provider-manager
 - 远端新 model 只标 `<id>`，默认不勾选。勾选 = 添加。
 
 按 `Enter` 写入结果，按 `Esc` 取消。保存时最终 `models.json` 是 (勾选的 existing) + (勾选的 new) 的并集；远端 new 优先于 local（这样能拉到最新的 `reasoning` / `input` / `ctx` / `maxTokens` / `thinkingLevelMap`）。
+
+**checklist 对齐 pi 的 `/models` 列表交互**（model 多也能顺畅操作）：
+
+- **始终可见的 search 输入框**：顶部 `> ` 提示词 + 输光标，随时键入过滤（不区分大小写，同时匹配 `id` 和 `label`）；Backspace 删字。
+- **视口滚动**：默认 8 行可见。item 多于可见行时上下以 `⋮ N more below` / `⋮ N hidden` 提示。
+- **钉住首项**：cursor 滚出首页区后，顶部仍钉住 `m000 (top)`。无论怎么滚都能看到首项。
+- **wrap-around 导航**：`↑` / `↓` 顶部 / 底部循环选择；`j` / `k` 等价。
+- **Space 切换选中**：filter 状态下也作用于过滤后的当前项，不会误动隐藏项。
+- **顶部 `selected / total selected`** 状态保持。
+- **底部 `(current/total)` 位置指示**（filter 非空时是过滤后位置，空时是总长度）。
+- **search-first 约定**：所有可打印字符（a / i / g / G 等）都进 search，不作快捷键。避免与过滤输入冲突。
+
+视口高度可以用 `~/.pi/agent/provider-manager.json` 的 `syncViewportSize` 字段覆盖（5–200，越界走默认 8）。
 
 **新加的 model 字段来自 `~/.pi/agent/provider-manager.json` 的 `defaultModel` 段**（不是代码内置默认）—— 这是 `loadDefaultModelConfig()` 的行为。在 sync 前编辑这个文件可以定制 sync 出来的 model 模板。
 

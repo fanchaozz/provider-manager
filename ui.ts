@@ -12,6 +12,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { readModelsJson, getModelsJsonPath, maskApiKey, type ModelsJson, type ProviderConfig, type ModelConfig } from "./store.ts";
 import {
 	addProviderFlow,
+	addModelFlow,
 	editProviderFlow,
 	deleteProviderFlow,
 	editModelFlow,
@@ -297,7 +298,10 @@ class Dashboard {
 			if (this.pane === "provider") {
 				void this.runForm(addProviderFlow);
 			} else {
-				this.ctx.ui.notify("model 不能直接新增，请用 sync（按 y）", "info");
+				// model 面板 n → 调用 addModelFlow（sync 拉不到时使用模板新增）
+				const sel = this.providers[this.providerIndex];
+				if (sel) void this.runForm(addModelFlow, sel.id);
+				else this.ctx.ui.notify("No provider selected", "warning");
 			}
 			return;
 		}
@@ -487,7 +491,7 @@ class Dashboard {
 		} else {
 			const parts = ["↑↓/jk nav", "←→ pane"];
 			if (this.pane === "provider") parts.push("n new", "Enter edit", "y sync");
-			else parts.push("Enter edit", "y sync", "t test", "T test-all");
+			else parts.push("n new", "Enter edit", "y sync", "t test", "T test-all");
 			parts.push("d del", "? help", "q close");
 			lines.push(th.fg("dim", " " + parts.join(" · ")));
 		}
@@ -698,9 +702,9 @@ class Dashboard {
 		];
 		// 按面板增补特有项
 		if (this.pane === "provider") {
-			lines.splice(5, 0, "  n              new provider (models are added via sync)");
+			lines.splice(5, 0, "  n              new provider (model 仍走 sync)");
 		} else {
-			lines.splice(5, 0, "  t / T          test current model / test all in provider");
+			lines.splice(5, 0, "  n              new model manually (sync 拉不到时；走 defaultModel 模板)", "  t / T          test current model / test all in provider");
 		}
 		lines.push("", th.fg("dim", " y sync"));
 		return lines.map((l) => truncateToWidth(l, width));

@@ -82,47 +82,32 @@ async function main() {
 		comp3.handleInput("\x1b");
 		ok("onCancel 触发", cancelled);
 
-		console.log("\n=== ModelChecklist: a 全选/全不选 ===");
+		console.log("\n=== ModelChecklist: a/i/g/G 变为 search 输入（search-first 约定）===");
+		// 新设计：search 输入框始终可见、可打印字符都进 search。所以 a/i/g/G 不再是快捷键。
 		const comp4 = new ModelChecklist({
-			title: "ToggleAll",
+			title: "SearchFirst",
 			items: [{ id: "a" }, { id: "b" }, { id: "c" }],
 			theme,
 			onConfirm: () => {},
 			onCancel: () => {},
 		});
 		ok("初始全选", (comp4 as any).selected.size === 3);
-		comp4.handleInput("a");
-		ok("a 后全不选", (comp4 as any).selected.size === 0);
-		comp4.handleInput("a");
-		ok("a 再后全选", (comp4 as any).selected.size === 3);
-
-		console.log("\n=== ModelChecklist: i 反选 ===");
-		const comp5 = new ModelChecklist({
-			title: "Invert",
-			items: [{ id: "a" }, { id: "b" }, { id: "c" }],
-			theme,
-			onConfirm: () => {},
-			onCancel: () => {},
-		});
-		ok("初始全选", (comp5 as any).selected.size === 3);
-		comp5.handleInput("i");
-		ok("i 反选（0 个）", (comp5 as any).selected.size === 0);
-		comp5.handleInput("i");
-		ok("i 再反选（3 个）", (comp5 as any).selected.size === 3);
-
-		console.log("\n=== ModelChecklist: g/G 跳顶跳底 ===");
-		const comp6 = new ModelChecklist({
-			title: "Jump",
-			items: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }],
-			theme,
-			onConfirm: () => {},
-			onCancel: () => {},
-		});
-		(comp6 as any).cursor = 2;
-		comp6.handleInput("g");
-		ok("g 跳顶 → cursor 0", (comp6 as any).cursor === 0);
-		comp6.handleInput("G");
-		ok("G 跳底 → cursor 3", (comp6 as any).cursor === 3);
+		comp4.handleInput("a");  // a 进 query
+		ok("a 进 query（query='a'）", (comp4 as any).query === "a");
+		ok("selected 不变（a 不作 toggle all）", (comp4 as any).selected.size === 3);
+		// 清空 query
+		comp4.handleInput("\x7f");
+		ok("Backspace 清空 query", (comp4 as any).query === "");
+		// 同样：i、g、G 进 query
+		comp4.handleInput("i");
+		ok("i 进 query", (comp4 as any).query === "i");
+		comp4.handleInput("\x7f");
+		comp4.handleInput("g");
+		ok("g 进 query", (comp4 as any).query === "g");
+		comp4.handleInput("\x7f");
+		comp4.handleInput("G");
+		ok("G 进 query", (comp4 as any).query === "G");
+		comp4.handleInput("\x7f");
 
 		console.log("\n=== ModelChecklist: render 输出含 checkbox 标记 ===");
 		const comp7 = new ModelChecklist({
@@ -149,7 +134,10 @@ async function main() {
 		ok("含 footer Space 提示", joined.includes("Space"));
 		ok("含 footer Enter 提示", joined.includes("Enter"));
 		ok("含 footer Esc 提示", joined.includes("Esc"));
-		ok("cursor 行有 ▸ 标记", lines.some((l) => l.includes("▸")));
+		ok("cursor 行有 ▶ 标记", lines.some((l) => l.includes("▶")));
+		ok("含 search input 提示词 (type to filter)", joined.includes("type to filter"));
+		ok("含顶部 selected/total 状态", joined.includes("1/3 selected"));
+		ok("含底部 (1/N) 位置指示", /\(1\/3\)/.test(joined));
 	}
 
 	console.log("\n=== preSelect 过滤 ===");
@@ -169,6 +157,129 @@ async function main() {
 		ok("a 预选", (comp as any).selected.has("a"));
 		ok("b 不预选", !(comp as any).selected.has("b"));
 		ok("c 预选", (comp as any).selected.has("c"));
+	}
+
+	console.log("\n=== ModelChecklist: 导航 wrap-around（顶部↑→末、底部↓→首）===");
+	{
+		const comp = new ModelChecklist({
+			title: "Wrap",
+			items: [{ id: "a" }, { id: "b" }, { id: "c" }],
+			theme,
+			onConfirm: () => {},
+			onCancel: () => {},
+		});
+		ok("初始 cursor=0", (comp as any).cursor === 0);
+		comp.handleInput("\x1b[A");  // ↑
+		ok("↑ 在顶部跳到末项（cursor=2）", (comp as any).cursor === 2);
+		comp.handleInput("\x1b[B");  // ↓
+		ok("↓ 在底部跳回首项（cursor=0）", (comp as any).cursor === 0);
+		// k 同样
+		comp.handleInput("k");
+		ok("k 在顶部跳到末项（cursor=2）", (comp as any).cursor === 2);
+		comp.handleInput("j");
+		ok("j 在底部跳回首项（cursor=0）", (comp as any).cursor === 0);
+	}
+
+	console.log("\n=== ModelChecklist: 搜索过滤 + Space 选中（filter 后仍可 toggle）===");
+	{
+		const comp = new ModelChecklist({
+			title: "FilterToggle",
+			items: [
+				{ id: "gpt-4" },
+				{ id: "gpt-4-turbo" },
+				{ id: "claude-opus-4-7" },
+				{ id: "claude-sonnet-4" },
+			],
+			theme,
+			onConfirm: () => {},
+			onCancel: () => {},
+		});
+		// 输入 "gpt" 过滤
+		comp.handleInput("g");
+		comp.handleInput("p");
+		comp.handleInput("t");
+		ok("query='gpt' → visibleItems 含 2 个", (comp as any).visibleItems().length === 2);
+		// Space 取消 cursor 处的 gpt-4
+		comp.handleInput(" ");
+		ok("Space 取消 gpt-4", !(comp as any).selected.has("gpt-4"));
+		ok("gpt-4-turbo 仍选", (comp as any).selected.has("gpt-4-turbo"));
+		ok("claude-* 仍选（不在 filter 内）", (comp as any).selected.has("claude-opus-4-7"));
+		// Backspace 删字
+		comp.handleInput("\x7f");
+		comp.handleInput("\x7f");
+		comp.handleInput("\x7f");
+		ok("Backspace 清空 query → visibleItems 恢复 4 个", (comp as any).visibleItems().length === 4);
+	}
+
+	console.log("\n=== ModelChecklist: 视口滚动 + (top) 钉住 + 隐藏提示 ===");
+	{
+		// 20 个 model，maxRows=5，cursor 滚到 10 时顶部应钉住首项
+		const items = Array.from({ length: 20 }, (_, i) => ({ id: `m${i.toString().padStart(2, "0")}` }));
+		const comp = new ModelChecklist({
+			title: "Viewport",
+			items,
+			theme,
+			maxRows: 5,
+			onConfirm: () => {},
+			onCancel: () => {},
+		});
+		ok("maxRows = 5", (comp as any).maxRows === 5);
+		// 滚到 10
+		for (let i = 0; i < 10; i++) comp.handleInput("\x1b[B");
+		ok("10 次 ↓ → cursor=10", (comp as any).cursor === 10);
+		comp.render(80);
+		// top 钉住首项时，cursor=10 超出 maxRows=5，有效视口 = 5-1=4，top = 10-4+1 = 7
+		ok("top 调整使 cursor 在视口内（top = 7）", (comp as any).top === 7);
+		const lines = comp.render(80);
+		const out = lines.join("\n");
+		ok("render 含 m00 (top) 钉住", out.includes("m00") && out.includes("(top)"));
+		ok("render 含 m10（cursor 项）", out.includes("m10"));
+		ok("render 含 'hidden' 提示", out.includes("hidden"));
+		ok("render 含 'more below' 提示", out.includes("more below"));
+		// 位置指示
+		ok("render 含 (11/20) 位置", out.includes("(11/20)"));
+		// selected/total 状态
+		ok("render 含 20/20 selected", out.includes("20/20 selected"));
+	}
+
+	console.log("\n=== ModelChecklist: query 空时 (current/total) 显示 cursor/total ===");
+	{
+		const comp = new ModelChecklist({
+			title: "Position",
+			items: [{ id: "a" }, { id: "b" }, { id: "c" }],
+			theme,
+			maxRows: 2,
+			onConfirm: () => {},
+			onCancel: () => {},
+		});
+		// 把 cursor 移到 2
+		comp.handleInput("\x1b[B");
+		comp.handleInput("\x1b[B");
+		ok("cursor=2", (comp as any).cursor === 2);
+		const out = comp.render(80).join("\n");
+		ok("query 空 → (3/3) 总长度指示", out.includes("(3/3)"));
+	}
+
+	console.log("\n=== ModelChecklist: maxRows 边界保护（5-200）===");
+	{
+		const comp = new ModelChecklist({
+			title: "Bounds",
+			items: [{ id: "a" }],
+			theme,
+			maxRows: 1,  // 太小
+			onConfirm: () => {},
+			onCancel: () => {},
+		});
+		ok("maxRows=1 → clamp 到 >= 5", (comp as any).maxRows >= 5);
+		const comp2 = new ModelChecklist({
+			title: "Bounds2",
+			items: [{ id: "a" }],
+			theme,
+			maxRows: 999,  // 太大
+			onConfirm: () => {},
+			onCancel: () => {},
+		});
+		ok("maxRows=999 → clamp 到 <= 200", (comp2 as any).maxRows <= 200);
 	}
 }
 

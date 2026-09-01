@@ -1,5 +1,5 @@
 // 测试 sync 路径下新加 model 的 thinkingLevelMap 走 loadDefaultModelConfig（change 7 修复）
-// 原 addModelFlow 已是 stub；新 model 只能通过 sync 加入。sync.ts 的 inferModel 用 defaults.thinkingLevelMap。
+// addModelFlow 现在也是真表单（useDefault=yes/no）了—同样会读 loadDefaultModelConfig 拿 thinkingLevelMap。
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

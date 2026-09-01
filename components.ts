@@ -45,28 +45,42 @@ export type ChecklistItem = {
 	disabled?: boolean;  // true = 显示但不让选
 };
 
+/** 视口默认行数（不含 header / summary / search / footer / scroll indicator）。8 和 pi 的 /models 一致。
+ *  在 provider-manager.json#syncViewportSize 可调（5-200）。 */
+export const CHECKLIST_DEFAULT_MAX_ROWS = 8;
+/** syncViewportSize 越界后由这个补齐 */
+export const CHECKLIST_MIN_MAX_ROWS = 5;
+export const CHECKLIST_MAX_MAX_ROWS = 200;
+
 export class ModelChecklist {
 	private items: ChecklistItem[];
 	private selected: Set<string>;
 	private cursor = 0;
+	private top = 0;
 	private title: string;
 	private theme: any;
+	private maxRows: number;
 	private onConfirm: (selected: string[]) => void;
 	private onCancel: () => void;
 	private cachedWidth = -1;
 	private cachedLines: string[] = [];
+	/** search 输入框的当前内容。同步起作用、可被全打印字符 / Backspace 修改。 */
+	private query = "";
 
 	constructor(opts: {
 		title: string;
 		items: ChecklistItem[];
 		theme: any;
 		preSelect?: (item: ChecklistItem) => boolean;  // 默认全选时筛掉不想要的
+		maxRows?: number;
 		onConfirm: (selected: string[]) => void;
 		onCancel: () => void;
 	}) {
 		this.title = opts.title;
 		this.items = opts.items;
 		this.theme = opts.theme;
+		const m = opts.maxRows ?? CHECKLIST_DEFAULT_MAX_ROWS;
+		this.maxRows = Math.max(CHECKLIST_MIN_MAX_ROWS, Math.min(CHECKLIST_MAX_MAX_ROWS, m));
 		this.onConfirm = opts.onConfirm;
 		this.onCancel = opts.onCancel;
 		this.selected = new Set();
@@ -75,6 +89,26 @@ export class ModelChecklist {
 			if (opts.preSelect && !opts.preSelect(it)) continue;
 			this.selected.add(it.id);
 		}
+	}
+
+	/** query 作用后的可见项列表。空 query ＝全量；disabled 始终隐藏。 */
+	private visibleItems(): ChecklistItem[] {
+		if (!this.query) return this.items;
+		const q = this.query.toLowerCase();
+		return this.items.filter((it) => {
+			if (it.disabled) return false;
+			const id = (it.id ?? "").toLowerCase();
+			const lbl = (it.label ?? "").toLowerCase();
+			return id.includes(q) || lbl.includes(q);
+		});
+	}
+
+	/** 调 top 使 cursor 在视口内。视口高度不含 (top) 钉住额外占的那几行。 */
+	private adjustTop(viewportH: number): void {
+		if (viewportH <= 0) return;
+		if (this.cursor < this.top) this.top = this.cursor;
+		if (this.cursor >= this.top + viewportH) this.top = this.cursor - viewportH + 1;
+		if (this.top < 0) this.top = 0;
 	}
 
 	handleInput(data: string): void {
@@ -86,8 +120,28 @@ export class ModelChecklist {
 			this.onConfirm([...this.selected]);
 			return;
 		}
+		const visible = this.visibleItems();
+		if (visible.length === 0) {
+			// 空 list 下只认 search / 退出键
+			if (matchesKey(data, "backspace")) {
+				if (this.query.length > 0) {
+					this.query = this.query.slice(0, -1);
+					this.cursor = 0;
+					this.top = 0;
+					this.invalidate();
+				}
+				return;
+			}
+			if (data.length === 1 && data.charCodeAt(0) >= 32 && data.charCodeAt(0) < 127) {
+				this.query += data;
+				this.cursor = 0;
+				this.top = 0;
+				this.invalidate();
+			}
+			return;
+		}
 		if (data === " ") {
-			const it = this.items[this.cursor];
+			const it = visible[this.cursor];
 			if (it && !it.disabled) {
 				if (this.selected.has(it.id)) this.selected.delete(it.id);
 				else this.selected.add(it.id);
@@ -95,32 +149,36 @@ export class ModelChecklist {
 			}
 			return;
 		}
+		// wrap-around：顶部 ↑ 跳到末项、底部 ↓ 跳回首项（和 pi 的 /models 一致）
 		if (matchesKey(data, "down") || data === "j") {
-			this.cursor = Math.min(this.cursor + 1, this.items.length - 1);
+			this.cursor = (this.cursor + 1) % visible.length;
 			this.invalidate();
-		} else if (matchesKey(data, "up") || data === "k") {
-			this.cursor = Math.max(this.cursor - 1, 0);
+			return;
+		}
+		if (matchesKey(data, "up") || data === "k") {
+			this.cursor = (this.cursor - 1 + visible.length) % visible.length;
 			this.invalidate();
-		} else if (data === "a") {
-			// toggle all (only non-disabled)
-			const allIds = this.items.filter((it) => !it.disabled).map((it) => it.id);
-			if (this.selected.size === allIds.length) this.selected.clear();
-			else this.selected = new Set(allIds);
-			this.invalidate();
-		} else if (data === "g") {
-			// jump to top
-			this.cursor = 0; this.invalidate();
-		} else if (data === "G") {
-			// jump to bottom
-			this.cursor = this.items.length - 1; this.invalidate();
-		} else if (data === "i") {
-			// invert selection
-			const next = new Set<string>();
-			for (const it of this.items) {
-				if (it.disabled) continue;
-				if (!this.selected.has(it.id)) next.add(it.id);
+			return;
+		}
+		if (matchesKey(data, "backspace")) {
+			// 优先删 search 字；query 空时退化为 no-op（不动 cursor）
+			if (this.query.length > 0) {
+				this.query = this.query.slice(0, -1);
+				// query 变了，重新算 visible 与 cursor
+				const v2 = this.visibleItems();
+				if (this.cursor >= v2.length) this.cursor = Math.max(0, v2.length - 1);
+				this.top = 0;
+				this.invalidate();
 			}
-			this.selected = next;
+			return;
+		}
+		// 其他可打印字符：进 search（不设 a/g/i 等快捷键了 — search-first 约定）
+		if (data.length === 1 && data.charCodeAt(0) >= 32 && data.charCodeAt(0) < 127) {
+			this.query += data;
+			// query 变了重算
+			const v2 = this.visibleItems();
+			if (this.cursor >= v2.length) this.cursor = Math.max(0, v2.length - 1);
+			this.top = 0;
 			this.invalidate();
 		}
 	}
@@ -132,53 +190,147 @@ export class ModelChecklist {
 		const th = this.theme;
 		const lines: string[] = [];
 
-		// Header
-		const head = th.fg("accent", th.bold(` ${this.title} `)) + th.fg("borderMuted", "─".repeat(Math.max(0, width - this.title.length - 4)));
-		lines.push(head);
 		const total = this.items.length;
 		const sel = this.selected.size;
 		const disabled = this.items.filter((it) => it.disabled).length;
+		const visible = this.visibleItems();
+		const visCount = visible.length;
+
+		// Header：title + 上划线
+		const head = th.fg("accent", th.bold(` ${this.title} `)) + th.fg("borderMuted", "─".repeat(Math.max(0, width - this.title.length - 4)));
+		lines.push(head);
+		// 顶部 selected / total 状态
 		const summary = ` ${sel}/${total} selected${disabled ? ` (${disabled} existing, skipped)` : ""} `;
 		lines.push(th.fg("dim", summary));
+		// search 输入框（始终显示）
+		const queryW = Math.max(0, width - 4);
+		const queryShown = this.query.length > queryW ? this.query.slice(0, queryW) : this.query;
+		// pi 的 /models 风格："> " 作为 prompt，"|" 是 cursor。query 末尾加 "▏" 作为 placeholder 提示。
+		const queryLine = th.fg("accent", " > ") + (this.query ? th.fg("text", queryShown) : th.fg("muted", "▏"));
+		lines.push(truncateForRender(queryLine, width));
 		lines.push("");
 
-		// List
-		if (total === 0) {
-			lines.push(th.fg("dim", "  (no models to choose from)"));
+		// 列表区
+		// 布局：visible.length > maxRows 时顶部钉住首项 + (top)，多占 2 行。
+		// 这样 mid-list 滚动也能看到 “列表起点是谁” 。
+		const itemLines: string[] = [];
+		let moreBelow: string | null = null;
+		if (visCount === 0) {
+			itemLines.push(th.fg("dim", this.query
+				? `  (no models match "${this.query}")`
+				: "  (no models to choose from)"));
 		} else {
-			for (let i = 0; i < this.items.length; i++) {
-				const it = this.items[i];
+			const needPinOutside = this.cursor >= this.maxRows;
+			// 钉住首项占 1 行。有效视口 = maxRows - 1（未钉住时 = maxRows）
+			const effectiveViewport = Math.max(1, this.maxRows - (needPinOutside ? 1 : 0));
+			this.adjustTop(effectiveViewport);
+			const viewStart = this.top;
+			const viewEnd = Math.min(visCount, viewStart + effectiveViewport);
+
+			if (needPinOutside) {
+				const first = visible[0];
+				const box = first.disabled ? th.fg("dim", "[skip]")
+					: this.selected.has(first.id) ? th.fg("success", "[√]")
+					: th.fg("dim", "[ ]");
+				itemLines.push(truncateForRender(`  ${box} ${first.id}  ${th.fg("dim", "(top)")}`, width));
+				// hidden 计数：剩下未在钉住首项 / viewport 中展示的项
+				// = total - (1 pinned + viewport) = total - maxRows
+				const hiddenTotal = visCount - 1 - (viewEnd - viewStart);
+				if (hiddenTotal > 0) {
+					itemLines.push(th.fg("dim", `  ⋮ ${hiddenTotal} hidden`));
+				}
+			}
+			for (let i = viewStart; i < viewEnd; i++) {
+				const it = visible[i];
 				const isCursor = i === this.cursor;
-				const arrow = isCursor ? th.fg("accent", "▸ ") : "  ";
-				let box: string;
-				if (it.disabled) box = th.fg("dim", "[skip]");
-				else if (this.selected.has(it.id)) box = th.fg("success", "[√]");
-				else box = th.fg("dim", "[ ]");
+				const arrow = isCursor ? th.fg("accent", "▶ ") : "  ";
+				const box = it.disabled ? th.fg("dim", "[skip]")
+					: this.selected.has(it.id) ? th.fg("success", "[√]")
+					: th.fg("dim", "[ ]");
 				const id = isCursor ? th.bold(it.id) : it.id;
+				const topLabel = (i === 0 && !needPinOutside) ? th.fg("dim", "  (top)") : "";
 				const sub = it.label ? "  " + th.fg("muted", it.label) : "";
-				lines.push(truncateForRender(`${arrow}${box} ${id}${sub}`, width));
+				itemLines.push(truncateForRender(`${arrow}${box} ${id}${topLabel}${sub}`, width));
+			}
+			if (viewEnd < visCount) {
+				const nextId = visible[viewEnd]?.id ?? "";
+				moreBelow = `  ⋮ ${visCount - viewEnd} more below (${nextId} …)`;
 			}
 		}
 
+		// items 先
+		for (const l of itemLines) lines.push(l);
+		if (moreBelow) lines.push(moreBelow);
+
+		// 位置指示：i / visCount，与 pi 的 /models 一致
+		// 注意：query 为空时 visCount = total，仍能告知总长度；query 非空时为过滤后位置
+		if (visCount > 0) {
+			lines.push(th.fg("muted", `  (${this.cursor + 1}/${visCount})`));
+		}
+
+		// chrome 置底
 		lines.push("");
 		lines.push(th.fg("borderMuted", "─".repeat(width)));
-		lines.push(th.fg("dim", " Space  toggle · ↑↓/jk  nav · g/G  top/bot · a  all · i  invert · Enter  apply · Esc  cancel"));
+		// 底部提示词：search 始终是首选，所以 a/i/g/G 不再是快捷键。
+		lines.push(th.fg("dim", " type to filter · Space toggle · ↑↓/jk nav (wrap) · Backspace del · Enter apply · Esc cancel"));
+
 		this.cachedWidth = width;
 		this.cachedLines = lines;
 		return lines;
 	}
 }
 
-/** 给 render 用的截断（不剥主题，简化版；与 ui.ts 的 truncateToWidth 行为一致） */
+/** 给 render 用的截断。计算宽度时跳过 ANSI 转义序列 + 已知主题标签，避免裁到一半丢颜色。 */
 function truncateForRender(s: string, width: number): string {
 	if (width <= 0) return "";
+	const KNOWN_THEME_TAGS = new Set<string>([
+		"accent", "warning", "dim", "success", "error", "muted", "text",
+		"borderMuted", "border", "borderAccent",
+		"background", "primary", "secondary",
+		"toolTitle", "toolOutput", "toolBg",
+		"customMessageBg", "userMessageBg", "thinking",
+		"bold", "italic", "underline", "inverse",
+		"selection", "comment", "keyword", "string", "number", "function",
+		"variable", "type", "operator", "punctuation", "property",
+	]);
 	let w = 0;
 	let out = "";
-	for (const ch of s) {
+	let i = 0;
+	while (i < s.length) {
+		// ANSI 转义序列：\x1b[ ... m（零宽）
+		if (s[i] === "\x1b" && i + 1 < s.length && s[i + 1] === "[") {
+			const close = s.indexOf("m", i + 2);
+			if (close !== -1) {
+				out += s.slice(i, close + 1);
+				i = close + 1;
+				continue;
+			}
+			// 其他 CSI 序列：结尾是某个字母
+			const tail = s.slice(i + 2).search(/[A-Za-z]/);
+			if (tail !== -1) {
+				out += s.slice(i, i + 2 + tail + 1);
+				i = i + 2 + tail + 1;
+				continue;
+			}
+		}
+		// 旧主题标签 [tag] / [/tag]：仅白名单内的零宽
+		if (s[i] === "[") {
+			const close = s.indexOf("]", i + 1);
+			if (close !== -1) {
+				const inner = s.slice(i + 1, close);
+				if (KNOWN_THEME_TAGS.has(inner) || (inner.startsWith("/") && KNOWN_THEME_TAGS.has(inner.slice(1)))) {
+					out += s.slice(i, close + 1);
+					i = close + 1;
+					continue;
+				}
+			}
+		}
+		const ch = s[i]!;
 		const cw = isWideChar(ch) ? 2 : 1;
 		if (w + cw > width) return out + (w + 1 <= width ? "…" : "");
 		out += ch;
 		w += cw;
+		i++;
 	}
 	return out;
 }

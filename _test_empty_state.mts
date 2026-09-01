@@ -81,12 +81,21 @@ dash2.handleInput("y"); ok2("y 在空态不崩", true);
 dash2.handleInput("\x1b[D"); ok2("← 在空态不崩", true);
 dash2.handleInput("?");   ok2("? 在空态切换 help", (dash2 as any).help === true);
 
-console.log("\n=== n 在 pane=model 时不触发表单，给 notify ===");
+console.log("\n=== n 在 pane=model 时调 addModelFlow（添加新 model）===");
 const dash3 = new Dashboard(mockCtx, th, () => {});
 await dash3.init();
-// 空态下 pane 仍是 provider。模拟切到 model（providerIndex 此时为 0，没有 model；pane 仍能切）
+// 预先写一个 provider + 1 个 model，让 n 走 addModelFlow
+await writeFileSync(MODELS_PATH, JSON.stringify({ providers: { prov1: { baseUrl: "x", api: "openai-completions", models: [{ id: "m1" }] } } }));
+await dash3.init();
 (dash3 as any).pane = "model";
 let notifySeen = "";
 (dash3 as any).ctx.ui.notify = (msg: string) => { notifySeen = msg; };
+let addModelFlowCalled = false;
+const origRunForm = (dash3 as any).runForm.bind(dash3);
+(dash3 as any).runForm = async (formFn: any, ...args: any[]) => {
+	if (formFn.name === "addModelFlow") addModelFlowCalled = true;
+	return origRunForm(formFn, ...args);
+};
 dash3.handleInput("n");
-ok2("pane=model 按 n → notify 提示 sync", notifySeen.includes("sync"));
+ok2("pane=model 按 n → 触发 addModelFlow（恢复后 sync 不到也可用）", addModelFlowCalled);
+ok2("pane=model 按 n → 不再提示 sync（改为 addModelFlow）", !notifySeen.includes("sync") || notifySeen === "");

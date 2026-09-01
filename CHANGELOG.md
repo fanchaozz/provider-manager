@@ -3,6 +3,31 @@
 All notable changes to this project are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2026-09-01
+
+### Added
+- **恢复 addModelFlow 手动新增 model**：sync 拉不到上游（离线 / 私有部署 / 不支持 `/models`）时，仪表盘 Model 面板按 `n` 可手动新增。流程：先问 "Use default config?"，yes 套 `~/.pi/agent/provider-manager.json#defaultModel` 模板（含 `compat.supportsDeveloperRole:false` 不丢），no 逐项提示。id 重复 / 非法留在表单里提示。
+- `getSyncViewportSize()` 读 `~/.pi/agent/provider-manager.json#syncViewportSize`，越界返 null。
+- 新增 `_test_checklist_filter.mts` 12 个 case 覆盖视口 / 搜索 / wrap / config。
+
+### Fixed
+- **sync 拿到的 model 丢 compat 默认**：inferModel 没拷默认 compat，导致新加的 model 省略 `compat.supportsDeveloperRole:false` 默认项（Zhipu GLM 等需 false 的 provider 会话时会被默认按 pi 原生走 developer role、引发 422）。sync 后生效路径是写进 models.json，下次不重新 sync 不会自动补上—用户需重 sync 或手动 edit。
+- **sync 全部 uncheck + Enter 不清空 provider.models**：原代码遇到 `finalModels.length === 0` 就当作 “Sync cancelled” 走早返、不写盘。预期是 Enter 总是提交：uncheck 全部 = 清空该 provider 下所有 model；只有 Esc 才取消。
+
+### Changed
+- **Sync checklist 重做，对齐 pi 的 `/models` 列表**。model 100+ 时也能顺畅选择。
+  - **始终可见的 search 输入框**：顶部 `> ` 提示 + 输光标。所有可打印字符（a / i / g / G 等）都进 search，不作快捷键。
+  - **视口滚动**：默认 8 行可见。`syncViewportSize` 覆盖（5-200，越界走默认）。
+  - **钉住首项**：cursor 滚出首页后顶部仍钉住 `m000 (top)`，并打 `⋮ N hidden` 说明隐藏多少。
+  - **wrap-around 导航**：`↑` / `↓` 顶部 / 底部循环；`j` / `k` 等价。
+  - **Space toggle**：filter 状态下也作用于当前项。
+  - **顶部 `selected / total selected`** 保持。
+  - **底部 `(current/total)`** 位置指示。
+
+### Removed
+- 旧的 `g` / `G` / `a` / `i` 快捷键（与 search 输入冲突）。`j` / `k` 保留为 ↑ / ↓ 的别名。
+- 旧的 `/` filter 模式开关（search 现在始终可见）。
+
 ## [0.2.3] - 2026-08-27
 
 ### Fixed

@@ -60,6 +60,9 @@ async function main() {
 	ok("sync inferModel 套用默认 input=[text,image]", JSON.stringify(inferModel("plain-model", { id: "plain-model" }).input) === '["text","image"]');
 	ok("sync inferModel 套用默认 thinkingLevelMap.medium=medium", inferModel("plain-model", { id: "plain-model" }).thinkingLevelMap?.medium === "medium");
 	ok("sync inferModel 套用默认 thinkingLevelMap 6 个 null", ["off","minimal","low","high","xhigh","max"].every((l) => inferModel("plain-model", { id: "plain-model" }).thinkingLevelMap?.[l] === null));
+	// compat 默认同步。不复制会丢 supportsDeveloperRole（Zhipu GLM 需 false）
+	ok("sync inferModel 含 compat 字段", "compat" in inferModel("plain-model", { id: "plain-model" }));
+	ok("sync inferModel compat.supportsDeveloperRole=false（默认）", inferModel("plain-model", { id: "plain-model" }).compat?.supportsDeveloperRole === false);
 	// heuristic 覆盖：vision id 仍带 image
 	ok("sync inferModel vision id 输入仍含 image", inferModel("vision-model", { id: "vision-model" }).input.includes("image"));
 	// heuristic 与默认一致：o1 reasoning=true（默认就是 true，heuristic 也 true）

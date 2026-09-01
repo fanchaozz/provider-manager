@@ -82,10 +82,33 @@ export function ensureDefaultConfigFile(): string | null {
 		writeFileSync(p, JSON.stringify({
 			_defaultModel: "New model defaults used by /providers model <pid> add and dashboard n. When asked Use default config? answering yes applies these; no = per-field prompts. Edit then save -> next add picks up changes.",
 			defaultModel: DEFAULT_MODEL_CONFIG,
+			_syncViewportSize: "Sync checklist viewport height (rows). Affects how many models are visible at once during /providers sync. Default = 8. Range 5-200. To override: add \"syncViewportSize\": 30 here.",
 		}, null, 2) + "\n", { mode: 0o600 });
 		return p;
 	} catch (err) {
 		console.error(`[provider-manager] ensureDefaultConfigFile failed:`, err);
+		return null;
+	}
+}
+
+/**
+ * 读 ~/.pi/agent/provider-manager.json 的 syncViewportSize 字段。
+ * 用于 sync checklist 视口大小（一次性能看到的 model 行数）。
+ * 不存在 / 非法 / 越界（< 5 或 > 200）→ 返回 null，由调用方走默认。
+ */
+export function getSyncViewportSize(): number | null {
+	try {
+		const p = getDefaultModelConfigPath();
+		if (!existsSync(p)) return null;
+		const raw = readFileSync(p, "utf8");
+		const parsed = JSON.parse(raw);
+		const v = parsed?.syncViewportSize;
+		if (typeof v !== "number" || !Number.isFinite(v)) return null;
+		const n = Math.floor(v);
+		// 越界保护：5-200 之间。太小装不下任何项，太大可能让 framework 不裁剪（体验差）
+		if (n < 5 || n > 200) return null;
+		return n;
+	} catch {
 		return null;
 	}
 }
@@ -258,14 +281,137 @@ export async function addProviderFlow(ctx: ExtensionCommandContext, onDone: () =
     onDone?.();
 }
 
-/** @deprecated Models are only added/removed via sync. Kept as a stub so old imports do not crash; logs a notice. */
+/** @deprecated Models are added/removed via sync; this flow is for cases where sync
+ *  cannot reach the upstream (offline / private deploy / unsupported listing). Uses
+ *  loadDefaultModelConfig() as the field template. The "compat.supportsDeveloperRole:false"
+ *  default is preserved here too (Zhipu GLM 等 OpenAI-compat 网关需 false 避免 422)。 */
 export async function addModelFlow(
     ctx: ExtensionCommandContext,
-    _providerId: string,
+    providerId: string,
     onDone?: () => void,
 ): Promise<void> {
-    ctx.ui.notify("新增 model 请用 sync（按 y）。该入口已停用。", "warning");
+    if (ctx.mode !== "tui") {
+        ctx.ui.notify("add model 需要 TUI 模式。打开 /providers 选中 provider 后按 n", "warning");
+        onDone?.();
+        return;
+    }
+    const json = await readModelsJson();
+    const prov = json.providers[providerId];
+    if (!prov) {
+        ctx.ui.notify(`Provider "${providerId}" 不存在。`, "error");
+        onDone?.();
+        return;
+    }
+    // 先问 "Use default config?" — yes → loadDefaultModelConfig() 作初值；no → 逐项提问（0/空）
+    const useDefault = await ctx.ui.confirm(
+        "Use default model config?",
+        `Apply ~/.pi/agent/provider-manager.json#defaultModel template (reasoning / input / contextWindow / maxTokens / thinkingLevelMap / compat.supportsDeveloperRole)?  yes = template values; no = per-field prompts.`,
+    );
+    if (useDefault === undefined) { onDone?.(); return; }  // Esc 取消
+    const defaults = loadDefaultModelConfig();
+
+    // 字段集：id 始终问、name 问、其余问 + 给默认值
+    const fields: FormField[] = [
+        { key: "id", label: "id", type: "text", hint: "[a-z0-9_-]+", validate: (s) => {
+            if (!s) return "id required";
+            if (!/^[a-z0-9_.-]+$/i.test(s as string)) return "id must match [a-z0-9_.-]+";
+            if ((prov.models ?? []).some((m) => m.id === s)) return `model "${s}" already exists in provider "${providerId}"`;
+            return null;
+        } },
+        { key: "name", label: "Display name", type: "text", hint: "(empty = unset)" },
+    ];
+    if (!useDefault) {
+        // 逐项提示。给一个起点初值（上一轮默认值／代码默认）
+        fields.push(
+            { key: "reasoning", label: "reasoning", type: "select", options: ["no", "yes"], hint: "Zhipu GLM 等推理=否" },
+            { key: "input", label: "input", type: "multiselect", options: ["text", "image"] },
+            { key: "contextWindow", label: "contextWindow", type: "number", validate: (v) => typeof v === "number" && v >= 0 ? null : "must be non-negative" },
+            { key: "maxTokens", label: "maxTokens", type: "number", validate: (v) => typeof v === "number" && v >= 0 ? null : "must be non-negative" },
+            { key: "thinkingLevelMap", label: "thinkingLevelMap", type: "levelmap", hint: "(empty = remove)" },
+            // Zhipu GLM 等需 no (用 system role)
+            { key: "supportsDeveloperRole", label: "supportsDeveloperRole (compat)", type: "select", options: ["no", "yes"], hint: "Zhipu GLM 等需 no" },
+        );
+    }
+    const initial: Record<string, unknown> = useDefault
+        ? { id: "", name: "" }
+        : {
+            id: "",
+            name: "",
+            reasoning: defaults.reasoning ? "yes" : "no",
+            input: defaults.input,
+            contextWindow: defaults.contextWindow,
+            maxTokens: defaults.maxTokens,
+            thinkingLevelMap: defaults.thinkingLevelMap,
+            supportsDeveloperRole: defaults.compat?.supportsDeveloperRole === true ? "yes" : "no",
+        };
+    const result = await runFormEditor(ctx, `Add model to "${providerId}"`, fields, initial);
+    if (!result.saved) { onDone?.(); return; }
+    const v = result.values;
+    const id = (v.id as string).trim();
+    // 二次校验：表单后还会再查一次（同进程可能别的并发写）
+    if ((prov.models ?? []).some((m) => m.id === id)) {
+        ctx.ui.notify(`Model "${id}" already exists in "${providerId}".`, "error");
+        onDone?.();
+        return;
+    }
+    const newModel: ModelConfig = useDefault
+        ? buildModelFromTemplate(id, v.name as string, defaults)
+        : buildModelFromFields(id, v);
+    const newModels = [...(prov.models ?? []), newModel];
+    const newProv: ProviderConfig = { ...prov, models: newModels };
+    try {
+        const fresh = await readModelsJson();
+        await writeModelsJson({ ...fresh, providers: { ...fresh.providers, [providerId]: newProv } });
+        ctx.ui.notify(`✓ Model "${id}" added to "${providerId}".`, "success");
+    } catch (err) {
+        ctx.ui.notify(`Write failed: ${err instanceof Error ? err.message : err}`, "error");
+    }
     onDone?.();
+}
+
+/** 从 template（useDefault=yes）拼 ModelConfig。所有字段都从 defaults 拷贝。 */
+function buildModelFromTemplate(id: string, nameRaw: string, defaults: typeof DEFAULT_MODEL_CONFIG): ModelConfig {
+    return {
+        id,
+        name: nameRaw || undefined,
+        reasoning: defaults.reasoning,
+        input: [...defaults.input],
+        contextWindow: defaults.contextWindow,
+        maxTokens: defaults.maxTokens,
+        thinkingLevelMap: { ...defaults.thinkingLevelMap },
+        // compat 拷贝不丢：Zhipu GLM 等需 supportsDeveloperRole=false 防 422
+        compat: defaults.compat ? { ...defaults.compat } : { supportsDeveloperRole: false },
+    };
+}
+
+/** 从表单（useDefault=no）拼 ModelConfig。逐项使用用户输入，缺失项用 defaults 补。 */
+function buildModelFromFields(id: string, v: Record<string, unknown>): ModelConfig {
+    const defaults = loadDefaultModelConfig();
+    const name = ((v.name as string) || "") || undefined;
+    const reasoning = v.reasoning === "yes";
+    const input = Array.isArray(v.input) ? v.input as ("text" | "image")[] : [...defaults.input];
+    const contextWindow = (typeof v.contextWindow === "number" && v.contextWindow > 0)
+        ? v.contextWindow
+        : defaults.contextWindow;
+    const maxTokens = (typeof v.maxTokens === "number" && v.maxTokens > 0)
+        ? v.maxTokens
+        : defaults.maxTokens;
+    const thinkingLevelMap = v.thinkingLevelMap && typeof v.thinkingLevelMap === "object"
+        ? v.thinkingLevelMap as ModelConfig["thinkingLevelMap"]
+        : { ...defaults.thinkingLevelMap };
+    // compat：保留老 compat（如果用户输入给了）+ 补 supportsDeveloperRole。0/空 → false
+    const compat: Record<string, unknown> = { ...(defaults.compat ?? {}) };
+    compat.supportsDeveloperRole = v.supportsDeveloperRole === "yes";
+    return {
+        id,
+        name,
+        reasoning,
+        input,
+        contextWindow,
+        maxTokens,
+        thinkingLevelMap,
+        compat,
+    };
 }
 
 export async function editProviderFlow(
@@ -496,11 +642,15 @@ export async function syncFlow(ctx: ExtensionCommandContext, opts: SyncOpts = {}
         ...toAdd.map((m) => ({ id: m.id, label: m.id, hint: `reasoning=${m.reasoning} input=${m.input.join(",")} ctx=${m.contextWindow}` })),
     ];
     const selectedIds = await ctx.ui.custom<Set<string> | string[]>((_t, theme, _kb, done) => {
+        // 视口高度：用户配置 > 默认 8。越界 / 非法 → getSyncViewportSize 返 null，走默认。
+        const configured = getSyncViewportSize();
+        const maxRows = configured ?? 8;
         const checklist = new ModelChecklist({
             title: `Sync "${sourceId}": ${toAdd.length} new, ${(prov.models ?? []).length} existing`,
             items,
             preSelect: (it) => it.id ? (prov.models ?? []).some((m) => m.id === it.id) : true,
             theme,  // 构造时传 theme，pi 框架会注入
+            maxRows,
             onConfirm: (sel) => done(new Set(sel)),
             onCancel: () => done(undefined),
         });
@@ -527,7 +677,15 @@ export async function syncFlow(ctx: ExtensionCommandContext, opts: SyncOpts = {}
         }
     }
     if (finalModels.length === 0) {
-        ctx.ui.notify("No models selected. Sync cancelled (nothing kept).", "info");
+        // Enter = 提交选择。不 short-circuit：uncheck 全部 + Enter 也要写空列表。
+        // 只有 Esc / checklist onCancel 会走 onDone 不写盘。
+        const newProv: ProviderConfig = { ...prov, models: [] };
+        try {
+            await writeModelsJson({ ...json, providers: { ...json.providers, [sourceId!]: newProv } });
+            ctx.ui.notify(`Cleared all models from "${sourceId}". Press Ctrl+L to pick a model.`, "info");
+        } catch (err) {
+            ctx.ui.notify(`Write failed: ${err instanceof Error ? err.message : err}`, "error");
+        }
         opts.onDone?.();
         return;
     }
