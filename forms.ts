@@ -190,7 +190,10 @@ async function askConfirm(ctx: ExtensionCommandContext, title: string, message: 
     return ctx.ui.confirm(title, message);
 }
 
-/** 包 FormEditor 进 ctx.ui.custom dialog。返回 { saved, values } 或 { saved: false, values: initial }。 */
+/** 包 FormEditor 进 ctx.ui.custom dialog（浮窗式，不占对话窗口）。
+ *  返回 { saved, values } 或 { saved: false, values: initial }。
+ *  用 { overlay: true } 打开后，即使 dashboard 还在焦点，form editor 也能接管输入并叠在上面。
+ *  overlay 框架会自动给合理宽度，编辑器表格长时按 viewport 自适应。 */
 async function runFormEditor<T extends Record<string, unknown>>(
     ctx: ExtensionCommandContext,
     title: string,
@@ -206,6 +209,13 @@ async function runFormEditor<T extends Record<string, unknown>>(
             onSave: (values: T) => done({ saved: true, values }),
             onCancel: () => done(undefined),
         });
+    }, {
+        overlay: true,
+        overlayOptions: {
+            anchor: "center",
+            width: 84,
+            minWidth: 50,
+        },
     }).catch((err) => {
         // 框架抛错（不是用户取消 Esc）要让用户知道
         console.error(`[provider-manager] form editor error:`, err);
@@ -655,6 +665,14 @@ export async function syncFlow(ctx: ExtensionCommandContext, opts: SyncOpts = {}
             onCancel: () => done(undefined),
         });
         return checklist;
+    }, {
+        // 浮窗式：不占对话窗口，dashboard 关掉后这个 checklist 接管焦点
+        overlay: true,
+        overlayOptions: {
+            anchor: "center",
+            width: 88,
+            minWidth: 60,
+        },
     }).catch((err) => {
         // 框架抛错（不是用户取消）要让用户知道
         console.error(`[provider-manager] sync checklist error:`, err);

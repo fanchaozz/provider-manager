@@ -3,6 +3,21 @@
 All notable changes to this project are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-09-11
+
+### Changed
+- **仪表盘改为浮窗**（参考 pi-mcp-adapter 的 `/mcp`）：`/providers` 不再占对话窗口，整个仪表盘以 `ctx.ui.custom({ overlay: true })` 形式展开。对话窗口会保留上面输出。
+- **子流程也是浮窗**：edit / add / delete / sync 用的 FormEditor 和 ModelChecklist 全部以 overlay 打开，不会顶掉仪表盘焦点。
+- **3 个固定区域 + footer**：providers / models 列固定 8 行可视，detail 固定 16 行，footer 限 2 行拼接。数据多了不撑爆尺寸，只在列表内部滚动。
+- **可见行数滚动 + (current/total) 标记**：providers / models 列超过可视行时，列表内部滚动 + 顶部首项 pin + 底部 `(current/total)`，与 ModelChecklist 的 sync checklist 交互一致。
+- **新增 PgUp / PgDn 整页滚动**。
+- **浮窗加外边框**：Dashboard / FormEditor / ModelChecklist 三个 overlay 组件都加 `┌─...─┐│ ... │└─...─┘` 外框（原 tui 里的悬窗默认无边框，混在对话流里会糊）。顶框中部带主题色高亮标题。`components.box()` 助手复用。
+- **t / T 测试结果改为浮窗（TestPanel）**：进度、逐 model 结果、汇总都在浮窗内展示；多 model 紧凑 1 行/model（失败带错误详情行），单 model 展示完整 auth/reachable/generated 明细；`↑↓/jk` 滚动、`q`/`Esc` 关闭。`/providers test`、`/providers test-all` 命令同步切换；非 TUI 模式保留 notify fallback。
+
+### Fixed
+- **providers/models 列表滚到最后一可见行时 ▸ 光标消失**：adjustProviderTop / adjustModelTop 的视口高度与 render 列不一致（rows-1 vs rows-2），cursor 落在屏外。统一为 rows-2。
+- **套外框后内容行超宽 4 列**：body 改按 width-4 布局，box() 对超宽行防御性截断；ModelChecklist / FormEditor 底部键位提示按内容宽软换行，不再丢尾部键位。
+
 ## [1.0.1] - 2026-09-01
 
 ### Fixed

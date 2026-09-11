@@ -316,7 +316,10 @@ export class ModelChecklist {
 	render(width: number): string[] {
 		if (this.cachedWidth === width && this.cachedLines.length > 0) return this.cachedLines;
 		const th = this.theme;
-		const lines: string[] = [];
+		const body: string[] = [];
+
+		// box 外边框占 4 列（│×2 + 内边距×2），内容按 width-4 布局避免套框超宽
+		const cw = Math.max(20, width - 4);
 
 		const total = this.items.length;
 		const sel = this.selected.size;
@@ -325,18 +328,18 @@ export class ModelChecklist {
 		const visCount = visible.length;
 
 		// Header：title + 上划线
-		const head = th.fg("accent", th.bold(` ${this.title} `)) + th.fg("borderMuted", "─".repeat(Math.max(0, width - this.title.length - 4)));
-		lines.push(head);
+		const head = th.fg("accent", th.bold(` ${this.title} `)) + th.fg("borderMuted", "─".repeat(Math.max(0, cw - this.title.length - 4)));
+		body.push(head);
 		// 顶部 selected / total 状态
 		const summary = ` ${sel}/${total} selected${disabled ? ` (${disabled} existing, skipped)` : ""} `;
-		lines.push(th.fg("dim", summary));
+		body.push(th.fg("dim", summary));
 		// search 输入框（始终显示）
-		const queryW = Math.max(0, width - 4);
+		const queryW = Math.max(0, cw - 4);
 		const queryShown = this.query.length > queryW ? this.query.slice(0, queryW) : this.query;
 		// pi 的 /models 风格："> " 作为 prompt，"|" 是 cursor。query 末尾加 "▏" 作为 placeholder 提示。
 		const queryLine = th.fg("accent", " > ") + (this.query ? th.fg("text", queryShown) : th.fg("muted", "▏"));
-		lines.push(truncateForRender(queryLine, width));
-		lines.push("");
+		body.push(truncateForRender(queryLine, cw));
+		body.push("");
 
 		// 列表区
 		// 布局：visible.length > maxRows 时顶部钉住首项 + (top)，多占 2 行。
@@ -360,7 +363,7 @@ export class ModelChecklist {
 				const box = first.disabled ? th.fg("dim", "[skip]")
 					: this.selected.has(first.id) ? th.fg("success", "[√]")
 					: th.fg("dim", "[ ]");
-				itemLines.push(truncateForRender(`  ${box} ${first.id}  ${th.fg("dim", "(top)")}`, width));
+				itemLines.push(truncateForRender(`  ${box} ${first.id}  ${th.fg("dim", "(top)")}`, cw));
 				// hidden 计数：剩下未在钉住首项 / viewport 中展示的项
 				// = total - (1 pinned + viewport) = total - maxRows
 				const hiddenTotal = visCount - 1 - (viewEnd - viewStart);
@@ -378,7 +381,7 @@ export class ModelChecklist {
 				const id = isCursor ? th.bold(it.id) : it.id;
 				const topLabel = (i === 0 && !needPinOutside) ? th.fg("dim", "  (top)") : "";
 				const sub = it.label ? "  " + th.fg("muted", it.label) : "";
-				itemLines.push(truncateForRender(`${arrow}${box} ${id}${topLabel}${sub}`, width));
+				itemLines.push(truncateForRender(`${arrow}${box} ${id}${topLabel}${sub}`, cw));
 			}
 			if (viewEnd < visCount) {
 				const nextId = visible[viewEnd]?.id ?? "";
@@ -387,21 +390,35 @@ export class ModelChecklist {
 		}
 
 		// items 先
-		for (const l of itemLines) lines.push(l);
-		if (moreBelow) lines.push(moreBelow);
+		for (const l of itemLines) body.push(l);
+		if (moreBelow) body.push(moreBelow);
 
 		// 位置指示：i / visCount，与 pi 的 /models 一致
 		// 注意：query 为空时 visCount = total，仍能告知总长度；query 非空时为过滤后位置
 		if (visCount > 0) {
-			lines.push(th.fg("muted", `  (${this.cursor + 1}/${visCount})`));
+			body.push(th.fg("muted", `  (${this.cursor + 1}/${visCount})`));
 		}
 
 		// chrome 置底
-		lines.push("");
-		lines.push(th.fg("borderMuted", "─".repeat(width)));
+		body.push("");
+		body.push(th.fg("borderMuted", "─".repeat(cw)));
 		// 底部提示词：search 始终是首选，所以 a/i/g/G 不再是快捷键。
-		lines.push(th.fg("dim", " type to filter · Space toggle · ↑↓/jk nav (wrap) · Backspace del · Enter apply · Esc cancel"));
+		// 底部提示词：按 cw 软换行（box 会截断超宽行，避免尾部键位丢失）
+		const hintParts = ["type to filter", "Space toggle", "↑↓/jk nav (wrap)", "Backspace del", "Enter apply", "Esc cancel"];
+		let hintLine = "";
+		for (const p of hintParts) {
+			const cand = hintLine ? hintLine + " · " + p : " " + p;
+			if (cand.length > cw && hintLine) {
+				body.push(th.fg("dim", hintLine));
+				hintLine = " " + p;
+			} else {
+				hintLine = cand;
+			}
+		}
+		body.push(th.fg("dim", hintLine));
 
+		// 外边框：浮窗加 box，让 tui 里的 overlay 看起来不糊
+		const lines = box(th, width, this.title, body);
 		this.cachedWidth = width;
 		this.cachedLines = lines;
 		return lines;
@@ -409,7 +426,7 @@ export class ModelChecklist {
 }
 
 /** 给 render 用的截断。计算宽度时跳过 ANSI 转义序列 + 已知主题标签，避免裁到一半丢颜色。 */
-function truncateForRender(s: string, width: number): string {
+export function truncateForRender(s: string, width: number): string {
 	if (width <= 0) return "";
 	const KNOWN_THEME_TAGS = new Set<string>([
 		"accent", "warning", "dim", "success", "error", "muted", "text",
@@ -472,6 +489,113 @@ function isWideChar(ch: string): boolean {
 		(code >= 0xff00 && code <= 0xff60) ||
 		(code >= 0xffe0 && code <= 0xffe6)
 	);
+}
+
+// ============================================================================
+// Border box — 给浮窗式组件加外边框
+//
+// TUI 里的 overlay 默认不带边框，混在对话流里会糊。包一个矩形让用户一眼看出是浮窗。
+// 调用方式：
+//   const lines = body(title, contentLines, theme, width);
+//   - width 是外框的可见宽度（包括两侧 `│` + 内部 1 格 padding）
+//   - title 可空，为空时顶部是一行纯 `─`
+//   - 返回后的 lines 总高 = contentLines.length + 2（顶 + 底边框）
+// 视觉：
+//   ┌─ title ──────────────────────────────────────────────────┐
+//   │  content line 1                                          │
+//   │  content line 2                                          │
+//   └──────────────────────────────────────────────────────────┘
+// ============================================================================
+
+const KNOWN_THEME_TAGS_FOR_BOX = new Set<string>([
+	"accent", "warning", "dim", "success", "error", "muted", "text",
+	"borderMuted", "border", "borderAccent",
+	"background", "primary", "secondary",
+	"toolTitle", "toolOutput", "toolBg",
+	"customMessageBg", "userMessageBg", "thinking",
+	"bold", "italic", "underline", "inverse",
+	"selection", "comment", "keyword", "string", "number", "function",
+	"variable", "type", "operator", "punctuation", "property",
+]);
+
+/** 算一个字符串的可见宽度（跳过 ANSI 转义 + 已知主题标签） */
+function visibleWidthForBox(s: string): number {
+	let w = 0;
+	let i = 0;
+	while (i < s.length) {
+		if (s[i] === "\x1b" && i + 1 < s.length && s[i + 1] === "[") {
+			const close = s.indexOf("m", i + 2);
+			if (close !== -1) { i = close + 1; continue; }
+			const csiEnd = s.slice(i + 2).search(/[A-Za-z]/);
+			if (csiEnd !== -1) { i = i + 2 + csiEnd + 1; continue; }
+		}
+		if (s[i] === "[") {
+			const close = s.indexOf("]", i + 1);
+			if (close !== -1) {
+				const inner = s.slice(i + 1, close);
+				if (KNOWN_THEME_TAGS_FOR_BOX.has(inner) || (inner.startsWith("/") && KNOWN_THEME_TAGS_FOR_BOX.has(inner.slice(1)))) {
+					i = close + 1;
+					continue;
+				}
+			}
+		}
+		w += isWideChar(s[i]!) ? 2 : 1;
+		i++;
+	}
+	return w;
+}
+
+/** 给一行加 padding 到指定可见宽度。theme 标签和 ANSI 算 0 宽。 */
+function padLineForBox(s: string, width: number): string {
+	const w = visibleWidthForBox(s);
+	if (w >= width) return s;
+	return s + " ".repeat(width - w);
+}
+
+/**
+ * 给一个 render 输出包外边框。
+ * @param th     主题（用 fg/bold）
+ * @param width  外框总可见宽度（包含两侧 `│` + 内部 1 格 padding）。< 4 时不画边框，直接返回 content。
+ * @param title  顶栏标题（可含 ANSI 主题色）；传空字符串则不画标题，只用一根横线
+ * @param content 已 render 好的内容行（不含边框）
+ * @returns 加边框后的 lines
+ */
+export function box(th: any, width: number, title: string, content: string[]): string[] {
+	// 太窄不画框（终端 < 6 列时画框会重叠）
+	if (width < 6) return content;
+	const innerW = width - 2;       // `│` + 内容 + `│`
+	const padInnerW = innerW - 2;   // 内部加 1 格左右 padding
+	const border = th.fg("borderMuted", "│");
+	const cornerTL = th.fg("borderMuted", "┌");
+	const cornerTR = th.fg("borderMuted", "┐");
+	const cornerBL = th.fg("borderMuted", "└");
+	const cornerBR = th.fg("borderMuted", "┘");
+	const hbar = th.fg("borderMuted", "─");
+
+	const out: string[] = [];
+	// 顶
+	if (title) {
+		const titlePlain = ` ${title} `;
+		const titleW = visibleWidthForBox(titlePlain);
+		const leftFill = Math.max(1, Math.floor((innerW - titleW) / 2));
+		const rightFill = Math.max(0, innerW - leftFill - titleW);
+		out.push(
+			cornerTL
+			+ hbar.repeat(leftFill)
+			+ th.fg("accent", th.bold(titlePlain))
+			+ hbar.repeat(rightFill)
+			+ cornerTR,
+		);
+	} else {
+		out.push(cornerTL + hbar.repeat(innerW) + cornerTR);
+	}
+	// 中间
+	for (const ln of content) {
+		out.push(border + " " + padLineForBox(truncateForRender(ln, padInnerW), padInnerW) + " " + border);
+	}
+	// 底
+	out.push(cornerBL + hbar.repeat(innerW) + cornerBR);
+	return out;
 }
 
 // ============================================================================
@@ -985,11 +1109,14 @@ export class FormEditor<T extends Record<string, unknown>> {
 	render(width: number): string[] {
 		if (this.cachedWidth === width && this.cachedLines.length > 0) return this.cachedLines;
 		const th = this.theme;
-		const lines: string[] = [];
+		const body: string[] = [];
 
-		lines.push(th.fg("accent", th.bold(` ${this.title} `)) + th.fg("borderMuted", "─".repeat(Math.max(0, width - this.title.length - 4))));
-		if (this.error) lines.push(th.fg("error", ` ⚠ ${this.error}`));
-		lines.push("");
+		// box 外边框占 4 列（│×2 + 内边距×2），内容按 width-4 布局避免套框超宽
+		const cw = Math.max(20, width - 4);
+
+		body.push(th.fg("accent", th.bold(` ${this.title} `)) + th.fg("borderMuted", "─".repeat(Math.max(0, cw - this.title.length - 4))));
+		if (this.error) body.push(th.fg("error", ` ⚠ ${this.error}`));
+		body.push("");
 
 		const labelW = Math.max(...this.fields.map((x) => x.label.length));
 		for (let i = 0; i < this.fields.length; i++) {
@@ -998,19 +1125,19 @@ export class FormEditor<T extends Record<string, unknown>> {
 			// levelmap 字段：active 时展开 7 行；其他字段同原来
 			if (f.type === "levelmap") {
 				const label = (f.label + ":").padEnd(labelW + 2);
-				const linesForLevelmap = this.renderLevelmap(f, isActive, label, labelW, width);
-				for (const ln of linesForLevelmap) lines.push(ln);
+				const linesForLevelmap = this.renderLevelmap(f, isActive, label, labelW, cw);
+				for (const ln of linesForLevelmap) body.push(ln);
 				continue;
 			}
 			if (f.type === "select" && f.options) {
-				const linesForSelect = this.renderSelect(f, isActive, labelW, width);
-				for (const ln of linesForSelect) lines.push(ln);
+				const linesForSelect = this.renderSelect(f, isActive, labelW, cw);
+				for (const ln of linesForSelect) body.push(ln);
 				continue;
 			}
 			if (f.type === "multiselect" && f.options) {
 				const label = (f.label + ":").padEnd(labelW + 2);
-				const linesForMulti = this.renderMultiselect(f, isActive, label, labelW, width);
-				for (const ln of linesForMulti) lines.push(ln);
+				const linesForMulti = this.renderMultiselect(f, isActive, label, labelW, cw);
+				for (const ln of linesForMulti) body.push(ln);
 				continue;
 			}
 			const raw = isActive ? this.draft : this.formatValue(f, this.values[f.key]);
@@ -1029,11 +1156,11 @@ export class FormEditor<T extends Record<string, unknown>> {
 			const editMarker = isActive && this.editing ? th.fg("accent", " [● edit]") : "";
 			const hint = f.hint ? "  " + th.fg("muted", f.hint) : "";
 			const line = prefix + labelStr + valueStr + editMarker + hint;
-			lines.push(truncateForRender(line, width));
+			body.push(truncateForRender(line, cw));
 		}
 
-		lines.push("");
-		lines.push(th.fg("borderMuted", "─".repeat(width)));
+		body.push("");
+		body.push(th.fg("borderMuted", "─".repeat(cw)));
 		const f = this.fields[this.cursor];
 		const hints: string[] = ["↑↓ field"];
 		if (f?.type === "multiselect") hints.push(this.editing ? "↑↓ option · Space toggle · Enter commit" : "Enter edit · Space toggle");
@@ -1044,8 +1171,21 @@ export class FormEditor<T extends Record<string, unknown>> {
 		hints.push(this.editing && f && (f.type === "text" || f.type === "secret" || f.type === "number" || f.type === "json") ? "Backspace del" : "Backspace");
 		hints.push(this.editing ? "Enter commit" : "s save");
 		hints.push("Esc cancel");
-		lines.push(th.fg("dim", " " + hints.join(" · ")));
+		// footer 按 cw 软换行，避免 box 截断丢尾部键位
+		let hintLine = "";
+		for (const p of hints) {
+			const cand = hintLine ? hintLine + " · " + p : " " + p;
+			if (cand.length > cw && hintLine) {
+				body.push(th.fg("dim", hintLine));
+				hintLine = " " + p;
+			} else {
+				hintLine = cand;
+			}
+		}
+		body.push(th.fg("dim", hintLine));
 
+		// 外边框：浮窗加 box，让 tui 里的 overlay 看起来不糊
+		const lines = box(th, width, this.title, body);
 		this.cachedWidth = width;
 		this.cachedLines = lines;
 		return lines;

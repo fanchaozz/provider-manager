@@ -35,7 +35,7 @@ pi install npm:@fanchaozz/provider-manager
 | 编辑 provider / model | 仪表盘选中后按 `Enter`（表单里 Enter 进入字段 edit、确认） |
 | 删除 | 仪表盘按 `d`（确认对话框） |
 | 从 provider 的 API 拉取新 model 列表 | 仪表盘按 `y`，或 `/providers sync [<pid>]` |
-| 探测 auth + 可达性 + 1-token 测试调用 | 仪表盘 `t`（当前 model）或 `T`（provider 内全部） |
+| 探测 auth + 可达性 + 1-token 测试调用 | 仪表盘 `t`（当前 model）或 `T`（provider 内全部），结果在浮窗内展示；或 `/providers test <pid>/<mid>`、`/providers test-all [pid]` |
 | 从最近 `.bak` 恢复 | `/providers reset` |
 | 打印命令帮助 | `/providers help` |
 | 关闭仪表盘 | `q` 或 `Esc` |
@@ -46,25 +46,35 @@ pi install npm:@fanchaozz/provider-manager
 
 ## 仪表盘
 
-`/providers` 打开两栏 TUI：
+`/providers` 打开一个**浮窗**（类似 pi-mcp-adapter 的 `/mcp`）：不占用对话窗口，可以随时按 `q` 关闭。对话窗口会保留上面的输出。
 
-- **左栏** —— provider（id + auth 状态 + model 数；0 model 时 ⚠ 提示）
-- **右栏** —— 选中 provider 的 model（id + `[R]` reasoning / `[I]` image 标记 + ctx / max；R / I 实际值，未启用是 `-`）
-- **详情面板** —— 选中行分组：Identity / Endpoint / Auth / Capabilities / Limits / Thinking levels / Cost
-- **底栏** —— 按面板调整的按键提示（按 `?` 看完整 help）
+仪表盘采用 **3 个固定区域 + footer** 的布局，不随数据动态膨胀：
+
+- **顶部左栏 —— Providers**（固定 8 行可视；超了滚动，首项 pin + `(top)`，底部 `(current/total)`）
+- **顶部右栏 —— Models**（同上）
+- **底栏 —— Detail**（固定 16 行；选中项的完整信息）
+- **Footer**（≤2 行 hint拼接；超了会加 `+N more` 截断，不会撑爆宽度）
+
+数据行多了 (provider / model 数超过可视行) 可以：
+- `↑/↓` 或 `j/k` — 单行滚动（循环）
+- `PgUp` / `PgDn` — 整页滚动
+- `g` / `G` — 跳顶 / 跳底
+
+跨 provider 切时 model 面板的滚动位置自动重置（避免传过来）。
 
 ### 按键绑定
 
 | 键 | 行为 |
 |---|---|
-| `↑↓` / `j k` | 在当前面板上下移动 |
+| `↑↓` / `j k` | 在当前面板上下移动（循环） |
 | `g` / `G` | 跳到顶 / 底 |
+| `PgUp` / `PgDn` | 整页滚动 |
 | `←` / `→` | 切换 Providers ↔ Models 面板 |
 | `n` | **Providers 面板**：新增 provider。**Models 面板**：手动新增 model（sync 不到时；走 `defaultModel` 模板） |
-| `Enter` | 选中行进入 edit 表单（Provider 或 Model） |
+| `Enter` | 选中行进入 edit 表单（浮窗式，不占对话窗口） |
 | `d` | 删除（带确认对话框） |
 | `y` | 同步（拉取选中 provider 的远端 model 列表） |
-| `t` / `T` | **仅 Models 面板**：探测当前 model / provider 内全部 model |
+| `t` / `T` | **仅 Models 面板**：探测当前 model / provider 内全部 model（TestPanel 浮窗展示结果，`↑↓` 滚动） |
 | `?` | 切换帮助覆盖层（按面板显示特有键） |
 | `q` / `Esc` | 关闭仪表盘 |
 

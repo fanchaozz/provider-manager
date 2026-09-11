@@ -7,7 +7,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { readModelsJson } from "./store.ts";
-import { openDashboard } from "./ui.ts";
+import { openDashboard, openTestPanel } from "./ui.ts";
 import {
 	addProviderFlow,
 	deleteProviderFlow,
@@ -228,7 +228,6 @@ function cmdHelp(ctx: ExtensionCommandContext): void {
 // /providers test <provider>/<model>  |  /providers test-all [provider]
 // ---------------------------------------------------------------------------
 
-import { testModel, testProvider, formatTestResult } from "./test.ts";
 
 /** 测单个 model：arg 支持 "<provider>/<model>" 或 "<model>"（缺省走 models.json 里第一个 provider）。 */
 async function testCommand(ctx: ExtensionCommandContext, arg: string): Promise<void> {
@@ -258,9 +257,7 @@ async function testCommand(ctx: ExtensionCommandContext, arg: string): Promise<v
 		return;
 	}
 
-	const result = await testModel({ ctx: ctx as any, provider, model, mode: "full" });
-	// 同步 dashboard：测试结果统一 info（showStatus 可覆盖），失败语义靠文本 ✗ fail 前缀表达
-	ctx.ui.notify(formatTestResult(result), "info");
+	await openTestPanel(ctx, { provider, modelIds: [model], mode: "full" });
 }
 
 /** 批量测某 provider 全部 model；无参数时取第一个 provider。 */
@@ -288,16 +285,5 @@ async function testAllCommand(ctx: ExtensionCommandContext, providerId: string |
 		return;
 	}
 
-	ctx.ui.notify(`testing ${modelIds.length} model(s) of "${provider}"...`, "info");
-	const results = await testProvider({
-		ctx: ctx as any,
-		provider,
-		modelIds,
-		mode: "full",
-		concurrency: 3,
-	});
-	// 批量结果拼成一条 notify：逐条 notify 会被 showStatus 原地覆盖，只残留最后一条
-	const okCount = results.filter((r) => r.ok).length;
-	const summary = results.map((r) => formatTestResult(r)).join("\n\n") + `\n${provider}: ${okCount}/${results.length} ok`;
-	ctx.ui.notify(summary, "info");
+	await openTestPanel(ctx, { provider, modelIds, mode: "full", concurrency: 3 });
 }
